@@ -34,8 +34,9 @@ services:
       # The vite proxy forwards /api/* here (see web/vite.config.ts).
       - VITE_API_URL=http://backend:8000
     healthcheck:
-      # busybox wget ships with alpine
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:5173/"]
+      # busybox wget ships with alpine; 127.0.0.1 (not localhost) because
+      # busybox resolves localhost to ::1 while vite binds IPv4 only
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5173/"]
       interval: 30s
       timeout: 5s
       retries: 3
