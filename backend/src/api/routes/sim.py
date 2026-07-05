@@ -14,10 +14,19 @@ class OrbitRequest(BaseModel):
     trigger_interval_s: float = Field(default=2.0, gt=0, le=60)
 
 
+class CameraTriggerModel(BaseModel):
+    index: int
+    north_m: float
+    east_m: float
+    up_m: float
+    yaw_deg: float
+
+
 class OrbitResponse(BaseModel):
     dataset_id: str
     mode: str
     num_triggers: int
+    triggers: list[CameraTriggerModel]
     logs: list[str]
 
 
@@ -39,5 +48,11 @@ async def run_orbit(request: OrbitRequest) -> OrbitResponse:
         dataset_id=result.dataset_id,
         mode=result.mode,
         num_triggers=result.num_triggers,
+        triggers=[
+            CameraTriggerModel(
+                index=t.index, north_m=t.north_m, east_m=t.east_m, up_m=t.up_m, yaw_deg=t.yaw_deg
+            )
+            for t in result.triggers
+        ],
         logs=result.logs,
     )

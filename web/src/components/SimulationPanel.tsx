@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { errorMessage, runOrbitSim, type OrbitResponse } from "../api";
+import OrbitPlot from "./OrbitPlot";
 
 interface Props {
   dataset: string | null;
@@ -37,6 +38,7 @@ export default function SimulationPanel({ dataset }: Props) {
             Orbit for <strong>{result.dataset_id}</strong>: {result.num_triggers}{" "}
             camera triggers (<code>{result.mode}</code> mode).
           </p>
+          <OrbitPlot triggers={result.triggers} />
           <pre
             style={{
               maxHeight: 200,

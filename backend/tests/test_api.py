@@ -88,3 +88,6 @@ def test_orbit_sim() -> None:
     # at least one log line per camera trigger, plus start/end lines
     assert len(body["logs"]) >= 8
     assert any("Camera trigger" in line for line in body["logs"])
+    assert len(body["triggers"]) == 8
+    first = body["triggers"][0]
+    assert {"index", "north_m", "east_m", "up_m", "yaw_deg"} <= set(first)

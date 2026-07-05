@@ -193,6 +193,35 @@ def _downloadable_files() -> dict[str, list[Path]]:
     }
 
 
+@router.get("/files/preview.ply")
+def download_preview() -> FileResponse:
+    """Browser-sized point cloud: the dense cloud downsampled to ~150k points.
+
+    Regenerated lazily whenever the source cloud is newer than the preview.
+    """
+    from reconstruction.volume_compute import write_preview_cloud
+
+    project = settings.opensfm_project_dir
+    src = project / "undistorted" / "depthmaps" / "merged.ply"
+    if not src.is_file():
+        src = project / "reconstruction.ply"
+    if not src.is_file():
+        raise HTTPException(
+            status_code=404, detail="no point cloud yet — run a reconstruction first"
+        )
+
+    dst = src.parent / "preview.ply"
+    try:
+        if not dst.is_file() or dst.stat().st_mtime < src.stat().st_mtime:
+            write_preview_cloud(src, dst)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"cannot write preview (read-only data mount?): {exc}",
+        ) from exc
+    return FileResponse(dst, filename="preview.ply", media_type="application/octet-stream")
+
+
 @router.get("/files/{filename}")
 def download_file(filename: str) -> FileResponse:
     """Download a reconstruction artefact (whitelisted filenames only)."""

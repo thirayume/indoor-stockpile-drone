@@ -6,6 +6,7 @@ import {
   startVolumeJob,
   type VolumeJob,
 } from "../api";
+import ReconstructionViewer from "./ReconstructionViewer";
 
 interface Props {
   dataset: string | null;
@@ -85,6 +86,7 @@ export default function VolumePanel({ dataset }: Props) {
               (<code>{result.mesh_path}</code>)
             </p>
           )}
+          <ReconstructionViewer cloudUrl="/volume/files/preview.ply" meshUrl={result.mesh_url} />
         </div>
       )}
     </section>

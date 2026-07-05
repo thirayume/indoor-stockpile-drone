@@ -186,6 +186,24 @@ def grid_volume(
     return float(cell_size**2 * np.sum(sums / counts))
 
 
+def write_preview_cloud(src: Path, dst: Path, max_points: int = 150_000) -> Path:
+    """Downsample a cloud to roughly max_points and write it as binary PLY.
+
+    Full dense clouds are tens of MB — too heavy for the browser viewer;
+    a voxel-downsampled copy keeps the shape (and colours) at ~2 MB.
+    """
+    pcd = o3d.io.read_point_cloud(str(src))
+    if not pcd.has_points():
+        raise ValueError(f"no points in point cloud: {src}")
+    voxel = _bbox_diagonal(pcd) / 400.0
+    while len(pcd.points) > max_points:
+        pcd = pcd.voxel_down_sample(voxel)
+        voxel *= 1.5
+    o3d.io.write_point_cloud(str(dst), pcd)
+    logger.info("Wrote preview cloud %s (%d points)", dst, len(pcd.points))
+    return dst
+
+
 def _plane_basis(normal: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Two orthonormal vectors spanning the plane with the given normal."""
     ref = np.array([1.0, 0.0, 0.0]) if abs(normal[0]) < 0.9 else np.array([0.0, 1.0, 0.0])

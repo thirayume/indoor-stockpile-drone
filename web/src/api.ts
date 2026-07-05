@@ -1,10 +1,19 @@
 // Thin typed client for the FastAPI backend. All calls go through /api,
 // which the Vite dev server proxies to the backend (see vite.config.ts).
 
+export interface CameraTrigger {
+  index: number;
+  north_m: number;
+  east_m: number;
+  up_m: number;
+  yaw_deg: number;
+}
+
 export interface OrbitResponse {
   dataset_id: string;
   mode: string;
   num_triggers: number;
+  triggers: CameraTrigger[];
   logs: string[];
 }
 
@@ -58,6 +67,18 @@ function post<T>(path: string, body: unknown): Promise<T> {
 
 export function fetchDatasets(): Promise<string[]> {
   return request<{ datasets: string[] }>("/datasets").then((body) => body.datasets);
+}
+
+export function fetchDatasetImages(datasetId: string): Promise<string[]> {
+  return request<{ images: string[] }>(
+    `/datasets/${encodeURIComponent(datasetId)}/images`
+  ).then((body) => body.images);
+}
+
+/** URL of one dataset image; pass width for a server-side thumbnail. */
+export function datasetImageUrl(datasetId: string, name: string, width?: number): string {
+  const suffix = width ? `?width=${width}` : "";
+  return `${API_BASE}/datasets/${encodeURIComponent(datasetId)}/images/${encodeURIComponent(name)}${suffix}`;
 }
 
 export function runOrbitSim(datasetId: string): Promise<OrbitResponse> {
