@@ -9,9 +9,12 @@ export interface CameraTrigger {
   yaw_deg: number;
 }
 
+export type FlightPattern = "orbit" | "grid";
+
 export interface OrbitResponse {
   dataset_id: string;
   mode: string;
+  pattern: FlightPattern;
   num_triggers: number;
   triggers: CameraTrigger[];
   logs: string[];
@@ -81,8 +84,11 @@ export function datasetImageUrl(datasetId: string, name: string, width?: number)
   return `${API_BASE}/datasets/${encodeURIComponent(datasetId)}/images/${encodeURIComponent(name)}${suffix}`;
 }
 
-export function runOrbitSim(datasetId: string): Promise<OrbitResponse> {
-  return post<OrbitResponse>("/sim/orbit", { dataset_id: datasetId });
+export function runOrbitSim(
+  datasetId: string,
+  pattern: FlightPattern = "orbit"
+): Promise<OrbitResponse> {
+  return post<OrbitResponse>("/sim/orbit", { dataset_id: datasetId, pattern });
 }
 
 /** Queue a reconstruction job; backend defaults to the example dataset. */

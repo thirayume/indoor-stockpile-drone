@@ -61,15 +61,50 @@ def orbit_poses(radius_m: float, altitude_m: float, num_triggers: int) -> list[C
     return poses
 
 
+def grid_poses(extent_m: float, spacing_m: float, altitude_m: float) -> list[CameraTrigger]:
+    """Boustrophedon (lawnmower) survey over a square of side extent_m.
+
+    Alternate rows fly east/west; yaw is the direction of travel and the
+    camera looks straight down — the standard mapping/coverage pattern.
+    Works indoors: poses are local NED offsets, no GPS semantics involved.
+    """
+    poses: list[CameraTrigger] = []
+    half = extent_m / 2
+    steps = [-half + i * spacing_m for i in range(int(extent_m / spacing_m) + 1)]
+    steps = [s for s in steps if s <= half + 1e-9]
+    index = 0
+    for row, north in enumerate(steps):
+        columns = list(reversed(steps)) if row % 2 else steps
+        heading = 270.0 if row % 2 else 90.0  # west on odd rows, east on even
+        for east in columns:
+            poses.append(
+                CameraTrigger(
+                    index=index, north_m=north, east_m=east, up_m=altitude_m, yaw_deg=heading
+                )
+            )
+            index += 1
+    return poses
+
+
 async def run_orbit_sim(
     dataset_id: str,
     radius_m: float = 5.0,
     altitude_m: float = 3.0,
     num_triggers: int = 24,
     trigger_interval_s: float = 2.0,
+    pattern: str = "orbit",
+    spacing_m: float = 2.0,
 ) -> SimResult:
-    """Fly (or simulate) a circular orbit and collect camera trigger events."""
-    poses = orbit_poses(radius_m, altitude_m, num_triggers)
+    """Fly (or simulate) a capture pattern and collect camera trigger events.
+
+    pattern "orbit": circle of radius_m around the pile, cameras facing it.
+    pattern "grid":  lawnmower survey over a square of side 2 * radius_m
+                     with spacing_m between rows/shots (coverage mapping).
+    """
+    if pattern == "grid":
+        poses = grid_poses(extent_m=radius_m * 2, spacing_m=spacing_m, altitude_m=altitude_m)
+    else:
+        poses = orbit_poses(radius_m, altitude_m, num_triggers)
     logs: list[str] = []
 
     if _mavsdk_available() and is_sitl_reachable(timeout_s=1.0):

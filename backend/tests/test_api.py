@@ -78,6 +78,21 @@ def test_volume_example_success_response_shape(monkeypatch) -> None:
     assert body["ply_url"] == "/volume/files/merged.ply"
 
 
+def test_grid_survey_pattern() -> None:
+    response = client.post(
+        "/sim/orbit",
+        json={"dataset_id": "demo", "pattern": "grid", "radius_m": 5.0, "spacing_m": 2.5},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["pattern"] == "grid"
+    assert body["num_triggers"] == 25  # 5 rows x 5 columns over a 10 m square
+    assert len({t["north_m"] for t in body["triggers"]}) == 5
+    # serpentine: first row flies east, second row flies west
+    assert body["triggers"][0]["yaw_deg"] == 90.0
+    assert body["triggers"][5]["yaw_deg"] == 270.0
+
+
 def test_orbit_sim() -> None:
     response = client.post("/sim/orbit", json={"dataset_id": "demo", "num_triggers": 8})
     assert response.status_code == 200

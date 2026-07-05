@@ -16,11 +16,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# Dependencies first, in their own layer: code edits then rebuild in seconds
+# instead of re-resolving pip (and re-compiling OpenSfM below).
 COPY pyproject.toml ./
-COPY src ./src
-COPY run_example_reconstruction.py ./
-
-RUN pip install --no-cache-dir -e .
+RUN python -c "import tomllib; print('\n'.join(tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']))" > /tmp/requirements.txt \
+    && pip install --no-cache-dir -r /tmp/requirements.txt
 
 # Datasets (the ODMdata submodule and the OpenSfM project) are NOT baked into
 # the image — they are large and change independently of the code.
@@ -48,6 +48,11 @@ RUN if [ "$INSTALL_OPENSFM" = "true" ]; then \
         && chmod +x /usr/local/bin/opensfm \
         && rm -rf /var/lib/apt/lists/* ; \
     fi
+
+# Application code last — the cheapest layer to rebuild.
+COPY src ./src
+COPY run_example_reconstruction.py ./
+RUN pip install --no-cache-dir --no-deps -e .
 
 EXPOSE 8000
 
