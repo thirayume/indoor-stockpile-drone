@@ -1,6 +1,11 @@
 services:
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        # Bake the OpenSfM CLI into the image (long C++ build):
+        #   INSTALL_OPENSFM=true docker compose build backend
+        INSTALL_OPENSFM: ${INSTALL_OPENSFM:-false}
     ports:
       - "8000:8000"
     volumes:

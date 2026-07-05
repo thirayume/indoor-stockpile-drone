@@ -4,7 +4,8 @@
 #   ├── config.yaml
 #   ├── images/          <- linked/copied from data/odm/<dataset> (see
 #   │                       backend/src/reconstruction/dataset_utils.py)
-#   └── gcp_list.txt     <- optional ground control points, empty for now
+#   └── gcp_list.txt     <- ground control points; create it ONLY with real
+#                           content — an empty file crashes OpenSfM's parser
 # All available keys: docs/opensfm/default_config.py (fetched by
 # tools/download_refs.py — the config page is gone from opensfm.org)
 

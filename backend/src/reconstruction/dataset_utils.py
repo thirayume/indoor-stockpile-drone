@@ -86,6 +86,14 @@ def prepare_opensfm_project(
         config.write_text(DEFAULT_CONFIG)
         logger.info("Wrote default config.yaml to %s", config)
 
+    # OpenSfM treats the mere existence of gcp_list.txt as "GCPs provided"
+    # and crashes parsing an empty one (StopIteration on the projection
+    # header) — drop empty leftovers.
+    gcp = project / "gcp_list.txt"
+    if gcp.is_file() and not gcp.read_text(encoding="utf-8").strip():
+        gcp.unlink()
+        logger.warning("Removed empty %s — OpenSfM cannot parse an empty GCP file", gcp)
+
     images = prepare_opensfm_images(
         dataset_id, odm_dir=root, project_dir=project, use_symlink=use_symlink
     )
