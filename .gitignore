@@ -15,15 +15,11 @@ data/opensfm_project/images
 # Downloaded reference material (refresh with: python tools/download_refs.py)
 docs/opensfm/
 
-# OpenSfM pipeline outputs (regenerated from images/)
-data/opensfm_project/camera_models.json
-data/opensfm_project/exif/
-data/opensfm_project/features/
-data/opensfm_project/matches/
-data/opensfm_project/reports/
-data/opensfm_project/tracks.csv
-data/opensfm_project/reconstruction*.json
-data/opensfm_project/undistorted/
+# OpenSfM pipeline outputs (regenerated from images/) — everything in the
+# project folder except config.yaml and an optional real gcp_list.txt
+data/opensfm_project/*
+!data/opensfm_project/config.yaml
+!data/opensfm_project/gcp_list.txt
 
 # data/odm is the ODMdata git submodule; dataset repos cloned inside it are
 # untracked there and invisible to this repo (submodule ignore = untracked).
