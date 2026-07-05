@@ -169,13 +169,19 @@ python tools/download_refs.py --force    # re-download everything
 
 ### Note on OpenSfM
 
-The backend image does **not** build OpenSfM (it is a heavy C++/Python source
-build with no wheels). To run real reconstructions, either:
+The default backend image does **not** build OpenSfM (heavy C++ build, no
+wheels). To bake it in — this path is verified end-to-end — build with:
 
-- use the official OpenSfM docker image and run the pipeline against the
-  mounted `data/opensfm_project/`, or
-- install OpenSfM from source into the backend image and ensure the `opensfm`
-  CLI is on `PATH`.
+```bash
+INSTALL_OPENSFM=true docker compose build backend
+# or: docker build --build-arg INSTALL_OPENSFM=true -t indoor-stockpile-drone-backend backend
+```
+
+The stage mirrors upstream's `Dockerfile.ubuntu24` (scikit-build-core +
+OpenCV/Ceres/Eigen) and adds an `/usr/local/bin/opensfm` wrapper, since
+upstream installs no console entry point. Verified result: the full
+pipeline over the 16-image `banana` dataset runs in ~6 minutes on CPU and
+produces a ~37 MB dense `merged.ply`.
 
 Also drop the `:ro` on the `./data` mount in `docker-compose.yml` — OpenSfM
 writes its outputs into the project folder.
