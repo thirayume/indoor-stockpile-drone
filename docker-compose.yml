@@ -1,0 +1,33 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # Host data (ODMdata submodule + opensfm_project) mounted read-only.
+      # OpenSfM writes its outputs into data/opensfm_project/ — drop ":ro"
+      # when running reconstructions inside the container.
+      - ./data:/app/data:ro
+    environment:
+      - STOCKPILE_DATA_DIR=/app/data
+      - OPEN_SFM_DATA_ROOT=/app/data/opensfm_project
+    healthcheck:
+      # python one-liner because the slim image ships no curl/wget
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  web:
+    build:
+      context: ./web
+      target: serve   # switch to "dev" for the hot-reload dev server
+    ports:
+      - "5173:5173"
+    environment:
+      # The vite proxy forwards /api/* here (see web/vite.config.ts).
+      - VITE_API_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy

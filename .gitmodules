@@ -1,0 +1,4 @@
+[submodule "data/odm"]
+	path = data/odm
+	url = https://github.com/OpenDroneMap/ODMdata.git
+	ignore = untracked

@@ -1,0 +1,34 @@
+# OpenSfM configuration for the indoor stockpile dataset.
+# Dataset layout follows https://opensfm.org/docs/dataset.html:
+#   opensfm_project/
+#   ├── config.yaml
+#   ├── images/          <- linked/copied from data/odm/<dataset> (see
+#   │                       backend/src/reconstruction/dataset_utils.py)
+#   └── gcp_list.txt     <- optional ground control points, empty for now
+# All available keys: docs/opensfm/default_config.py (fetched by
+# tools/download_refs.py — the config page is gone from opensfm.org)
+
+# Camera model: Brown-Conrady projection (perspective + radial/tangential
+# distortion), used when EXIF alone doesn't determine the camera.
+camera_projection_type: BROWN
+use_exif_size: yes
+default_focal_prior: 0.85
+
+# Feature detection (OpenSfM defaults)
+feature_type: HAHOG           # default detector; SIFT/ORB/AKAZE also valid
+feature_process_size: 2048    # longest image edge resized to this first
+feature_min_frames: 4000
+
+# Matching — GPS-denied capture: never preselect image pairs by GPS
+matcher_type: FLANN
+matching_gps_distance: 0
+matching_gps_neighbors: 0
+
+# Reconstruction — no GPS to align against either
+align_method: naive
+bundle_use_gps: no
+bundle_use_gcp: no            # flip to yes once gcp_list.txt is populated
+
+# Dense reconstruction (undistort / compute_depthmaps)
+depthmap_resolution: 640
+depthmap_min_consistent_views: 3

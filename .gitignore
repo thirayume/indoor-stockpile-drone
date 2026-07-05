@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# Node
+node_modules/
+web/dist/
+
+# Prepared dataset images (symlink/copy created by dataset_utils prepare)
+data/opensfm_project/images
+
+# Downloaded reference material (refresh with: python tools/download_refs.py)
+docs/opensfm/
+
+# OpenSfM pipeline outputs (regenerated from images/)
+data/opensfm_project/camera_models.json
+data/opensfm_project/exif/
+data/opensfm_project/features/
+data/opensfm_project/matches/
+data/opensfm_project/reports/
+data/opensfm_project/tracks.csv
+data/opensfm_project/reconstruction*.json
+data/opensfm_project/undistorted/
+
+# data/odm is the ODMdata git submodule; dataset repos cloned inside it are
+# untracked there and invisible to this repo (submodule ignore = untracked).
+
+# Claude Code local settings
+.claude/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
