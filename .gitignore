@@ -25,6 +25,9 @@ data/opensfm_project/*
 # data/odm is the ODMdata git submodule; dataset repos cloned inside it are
 # untracked there and invisible to this repo (submodule ignore = untracked).
 
+# Local environment configuration (ports etc., read by docker compose)
+.env
+
 # Claude Code local settings
 .claude/
 

@@ -43,6 +43,14 @@ docker compose up --build        # or: docker-compose up --build
 - Web UI: http://localhost:5173
 - API: http://localhost:8000 — interactive docs at http://localhost:8000/docs
 
+If those ports are taken by other apps, override them in a `.env` file next
+to `docker-compose.yml` (read automatically, gitignored):
+
+```
+WEB_PORT=5273
+BACKEND_PORT=8000
+```
+
 Then test the workflow end-to-end in the UI: **1.** pick a dataset (needs one
 cloned under `data/odm/`, see *Datasets* below) → **2.** *Run orbit
 simulation* (offline mode unless SITL is up) → **3.** *Run reconstruction &

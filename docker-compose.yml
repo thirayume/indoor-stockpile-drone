@@ -7,7 +7,9 @@ services:
         #   INSTALL_OPENSFM=true docker compose build backend
         INSTALL_OPENSFM: ${INSTALL_OPENSFM:-false}
     ports:
-      - "8000:8000"
+      # Host port configurable: set BACKEND_PORT in the shell or in a .env
+      # file next to this compose file.
+      - "${BACKEND_PORT:-8000}:8000"
     volumes:
       # Host data (ODMdata submodule + opensfm_project) mounted read-only.
       # OpenSfM writes its outputs into data/opensfm_project/ — drop ":ro"
@@ -29,7 +31,8 @@ services:
       context: ./web
       target: serve   # switch to "dev" for the hot-reload dev server
     ports:
-      - "5173:5173"
+      # Host port configurable: set WEB_PORT if 5173 is taken by another app.
+      - "${WEB_PORT:-5173}:5173"
     environment:
       # The vite proxy forwards /api/* here (see web/vite.config.ts).
       - VITE_API_URL=http://backend:8000
