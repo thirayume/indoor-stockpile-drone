@@ -24,7 +24,12 @@ def test_download_unknown_file_returns_404() -> None:
     assert "unknown file" in response.json()["detail"]
 
 
-def test_download_not_generated_returns_404() -> None:
+def test_download_not_generated_returns_404(monkeypatch, tmp_path) -> None:
+    # Point the project at an empty directory: the developer machine may have
+    # real reconstruction outputs lying around.
+    from core.config import settings
+
+    monkeypatch.setattr(settings, "opensfm_project_root", tmp_path)
     response = client.get("/volume/files/merged.ply")
     assert response.status_code == 404
     assert "not generated" in response.json()["detail"]
