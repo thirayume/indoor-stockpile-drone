@@ -1,11 +1,14 @@
 import subprocess
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from core.config import settings
+from core.jobs import Job, job_manager
 from reconstruction.pipeline import run_reconstruction_and_volume
 from reconstruction.volume_compute import VolumeResult
 
@@ -44,6 +47,54 @@ class VolumeExampleResponse(BaseModel):
     ply_url: str = Field(description="Download URL served by GET /volume/files/...")
 
 
+class JobRequest(BaseModel):
+    dataset_id: str | None = Field(
+        default=None, description=f"Defaults to {DEFAULT_EXAMPLE_DATASET!r}."
+    )
+    use_symlink: bool = True
+
+
+class JobResponse(BaseModel):
+    job_id: str
+    kind: str
+    dataset_id: str
+    status: str
+    progress: str | None
+    error: str | None
+    result: VolumeRunResponse | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
+def _result_payload(result: VolumeResult) -> dict[str, Any]:
+    """Shape a VolumeResult the way VolumeRunResponse expects it."""
+    return {
+        "volume_m3": result.volume_m3,
+        "num_points": result.num_points,
+        "method": result.method,
+        "point_cloud_path": str(result.point_cloud_path),
+        "point_cloud_url": f"/volume/files/{result.point_cloud_path.name}",
+        "mesh_path": str(result.mesh_path) if result.mesh_path else None,
+        "mesh_url": f"/volume/files/{result.mesh_path.name}" if result.mesh_path else None,
+    }
+
+
+def _job_response(job: Job) -> JobResponse:
+    return JobResponse(
+        job_id=job.id,
+        kind=job.kind,
+        dataset_id=job.params.get("dataset_id", ""),
+        status=job.status.value,
+        progress=job.progress,
+        error=job.error,
+        result=VolumeRunResponse(**job.result) if job.result else None,
+        created_at=job.created_at,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
+    )
+
+
 def _reconstruct(dataset_id: str, use_symlink: bool = True) -> VolumeResult:
     """Run the full pipeline, mapping domain errors to HTTP status codes.
 
@@ -60,19 +111,53 @@ def _reconstruct(dataset_id: str, use_symlink: bool = True) -> VolumeResult:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.post("/jobs", response_model=JobResponse, status_code=202)
+def start_job(request: JobRequest | None = None) -> JobResponse:
+    """Queue a reconstruction as a background job; poll GET /volume/jobs/{id}.
+
+    Preferred over the blocking POST /volume/run for anything beyond tiny
+    datasets — real reconstructions run for minutes to hours.
+    """
+    dataset_id = (request.dataset_id if request else None) or DEFAULT_EXAMPLE_DATASET
+    use_symlink = request.use_symlink if request else True
+
+    def run(job: Job) -> dict[str, Any]:
+        def progress(phase: str) -> None:
+            job.progress = phase
+
+        result = run_reconstruction_and_volume(
+            dataset_id, use_symlink=use_symlink, on_progress=progress
+        )
+        return _result_payload(result)
+
+    job = job_manager.submit(
+        kind="reconstruction",
+        params={"dataset_id": dataset_id, "use_symlink": use_symlink},
+        fn=run,
+    )
+    return _job_response(job)
+
+
+@router.get("/jobs", response_model=list[JobResponse])
+def list_jobs() -> list[JobResponse]:
+    """All jobs of this API process, newest first."""
+    return [_job_response(job) for job in job_manager.list()]
+
+
+@router.get("/jobs/{job_id}", response_model=JobResponse)
+def get_job(job_id: str) -> JobResponse:
+    """State of a single job (status, progress, result or error)."""
+    job = job_manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"unknown job: {job_id}")
+    return _job_response(job)
+
+
 @router.post("/run", response_model=VolumeRunResponse)
 def run_volume(request: VolumeRunRequest) -> VolumeRunResponse:
-    """Prepare the dataset, run the OpenSfM pipeline, estimate pile volume."""
+    """Blocking variant of POST /volume/jobs — fine for scripts, not the UI."""
     result = _reconstruct(request.dataset_id, use_symlink=request.use_symlink)
-    return VolumeRunResponse(
-        volume_m3=result.volume_m3,
-        num_points=result.num_points,
-        method=result.method,
-        point_cloud_path=str(result.point_cloud_path),
-        point_cloud_url=f"/volume/files/{result.point_cloud_path.name}",
-        mesh_path=str(result.mesh_path) if result.mesh_path else None,
-        mesh_url=f"/volume/files/{result.mesh_path.name}" if result.mesh_path else None,
-    )
+    return VolumeRunResponse(**_result_payload(result))
 
 
 @router.post("/example", response_model=VolumeExampleResponse)
@@ -118,5 +203,5 @@ def download_file(filename: str) -> FileResponse:
         if path.is_file():
             return FileResponse(path, filename=filename, media_type="application/octet-stream")
     raise HTTPException(
-        status_code=404, detail=f"{filename} not generated yet — run POST /volume/run first"
+        status_code=404, detail=f"{filename} not generated yet — run a reconstruction first"
     )

@@ -18,12 +18,19 @@ export interface VolumeResponse {
   mesh_url: string | null;
 }
 
-export interface ExampleResponse {
-  status: string;
+export type JobStatus = "queued" | "running" | "succeeded" | "failed";
+
+export interface VolumeJob {
+  job_id: string;
+  kind: string;
   dataset_id: string;
-  volume_m3: number;
-  ply_path: string;
-  ply_url: string;
+  status: JobStatus;
+  progress: string | null;
+  error: string | null;
+  result: VolumeResponse | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
 }
 
 const API_BASE = "/api";
@@ -57,13 +64,13 @@ export function runOrbitSim(datasetId: string): Promise<OrbitResponse> {
   return post<OrbitResponse>("/sim/orbit", { dataset_id: datasetId });
 }
 
-export function runVolume(datasetId: string): Promise<VolumeResponse> {
-  return post<VolumeResponse>("/volume/run", { dataset_id: datasetId });
+/** Queue a reconstruction job; backend defaults to the example dataset. */
+export function startVolumeJob(datasetId?: string): Promise<VolumeJob> {
+  return post<VolumeJob>("/volume/jobs", datasetId ? { dataset_id: datasetId } : {});
 }
 
-/** Run the one-click example reconstruction (backend defaults to 'banana'). */
-export function runExampleReconstruction(datasetId?: string): Promise<ExampleResponse> {
-  return post<ExampleResponse>("/volume/example", datasetId ? { dataset_id: datasetId } : {});
+export function getVolumeJob(jobId: string): Promise<VolumeJob> {
+  return request<VolumeJob>(`/volume/jobs/${jobId}`);
 }
 
 /** Turn a backend-relative download URL (e.g. /volume/files/x.ply) into a link href. */

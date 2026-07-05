@@ -208,8 +208,17 @@ the images — no action needed.
 | GET    | `/health`                 | Liveness check                                     |
 | GET    | `/datasets`               | List dataset folders under `data/odm/`             |
 | POST   | `/sim/orbit`              | Run orbit flight (MAVSDK or offline), return logs  |
-| POST   | `/volume/run`             | Run OpenSfM pipeline + Open3D volume estimate      |
-| POST   | `/volume/example`         | Same, defaulting to the `banana` example dataset   |
+| POST   | `/volume/jobs`            | Queue a reconstruction job (what the UI uses)      |
+| GET    | `/volume/jobs/{id}`       | Poll job status / progress / result                |
+| GET    | `/volume/jobs`            | List jobs, newest first                            |
+| POST   | `/volume/run`             | Blocking reconstruction (scripts only)             |
+| POST   | `/volume/example`         | Blocking demo run, defaults to `banana`            |
 | GET    | `/volume/files/{filename}`| Download `merged.ply` / `stockpile_mesh.ply` etc.  |
 
 Interactive documentation for all endpoints: http://localhost:8000/docs
+
+Reconstructions run for minutes to hours, so the UI submits a **background
+job** and polls it; progress reports the current OpenSfM step. Job state is
+in-process: run the API as a single process (uvicorn's default, as in the
+Docker image) — swap `core/jobs.py` for a persistent queue if the API ever
+needs replicas.

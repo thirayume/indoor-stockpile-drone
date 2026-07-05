@@ -11,6 +11,7 @@ image (heavy C++ source build); see README for options.
 """
 
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from core.config import settings
@@ -50,12 +51,20 @@ def run_opensfm_pipeline(
     project_dir: Path,
     opensfm_bin: str = "opensfm",
     steps: list[str] | None = None,
+    on_step: Callable[[str, int, int], None] | None = None,
 ) -> Path:
-    """Run the OpenSfM pipeline; return the path to the best point cloud."""
+    """Run the OpenSfM pipeline; return the path to the best point cloud.
+
+    on_step(name, index, total) is called before each step — used by the
+    job system to publish progress.
+    """
     if not (project_dir / "images").is_dir():
         raise FileNotFoundError(f"no images/ folder in OpenSfM project: {project_dir}")
 
-    for step in steps or PIPELINE_STEPS:
+    pipeline = steps or PIPELINE_STEPS
+    for i, step in enumerate(pipeline, start=1):
+        if on_step is not None:
+            on_step(step, i, len(pipeline))
         run_step(step, project_dir, opensfm_bin=opensfm_bin)
 
     return find_point_cloud(project_dir)

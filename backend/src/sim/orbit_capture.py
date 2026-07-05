@@ -158,7 +158,7 @@ async def _await_state(
 
     try:
         await asyncio.wait_for(consume(), timeout=timeout_s)
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         raise RuntimeError(f"timed out after {timeout_s:.0f}s waiting for {what}") from exc
 
 

@@ -33,17 +33,18 @@ RUN pip install --no-cache-dir -e .
 # Toolchain: build-essential, cmake, git, pkg-config.
 # Libraries: libeigen3-dev (linear algebra), libopencv-dev (features/matching),
 #            libceres-dev (bundle-adjustment solver).
-# Upstream installs no console entry point, so we build in a source checkout
-# (per OpenSfM's docs) and add a small /usr/local/bin/opensfm wrapper.
+# Mirrors upstream's Dockerfile.ubuntu24 (scikit-build-core + cmake build).
+# Upstream installs no console entry point, so a small /usr/local/bin/opensfm
+# wrapper invokes bin/opensfm_main.py from the editable checkout.
 ARG INSTALL_OPENSFM=false
 RUN if [ "$INSTALL_OPENSFM" = "true" ]; then \
         apt-get update && apt-get install -y --no-install-recommends \
             build-essential cmake git pkg-config \
             libeigen3-dev libopencv-dev libceres-dev \
         && git clone --recursive --depth 1 https://github.com/mapillary/OpenSfM.git /opt/opensfm \
-        && pip install --no-cache-dir -r /opt/opensfm/requirements.txt \
-        && cd /opt/opensfm && python setup.py build \
-        && printf '#!/bin/sh\nPYTHONPATH=/opt/opensfm exec python3 /opt/opensfm/bin/opensfm_main.py "$@"\n' > /usr/local/bin/opensfm \
+        && pip install --no-cache-dir -e /opt/opensfm \
+            --config-settings=cmake.define.OPENSFM_BUILD_TESTS=OFF \
+        && printf '#!/bin/sh\nexec python3 /opt/opensfm/bin/opensfm_main.py "$@"\n' > /usr/local/bin/opensfm \
         && chmod +x /usr/local/bin/opensfm \
         && rm -rf /var/lib/apt/lists/* ; \
     fi
