@@ -170,21 +170,24 @@ python tools/download_refs.py --force    # re-download everything
 ### Note on OpenSfM
 
 The default backend image does **not** build OpenSfM (heavy C++ build, no
-wheels). To bake it in — this path is verified end-to-end — build with:
+wheels). To run real reconstructions — this path is verified end-to-end —
+use the overlay, which bakes in OpenSfM *and* makes the data mount
+writable. Works the same in bash, PowerShell and cmd:
 
 ```bash
-INSTALL_OPENSFM=true docker compose build backend
-# or: docker build --build-arg INSTALL_OPENSFM=true -t indoor-stockpile-drone-backend backend
+docker compose -f docker-compose.yml -f docker-compose.opensfm.yml up --build
 ```
 
-The stage mirrors upstream's `Dockerfile.ubuntu24` (scikit-build-core +
-OpenCV/Ceres/Eigen) and adds an `/usr/local/bin/opensfm` wrapper, since
+(The equivalent by hand: build with the `INSTALL_OPENSFM=true` build arg —
+`set INSTALL_OPENSFM=true` in cmd / `$env:INSTALL_OPENSFM="true"` in
+PowerShell before `docker compose build backend` — and drop `:ro` from the
+`./data` mount. The `VAR=value command` one-liner is bash-only.)
+
+The build stage mirrors upstream's `Dockerfile.ubuntu24` (scikit-build-core
++ OpenCV/Ceres/Eigen) and adds an `/usr/local/bin/opensfm` wrapper, since
 upstream installs no console entry point. Verified result: the full
 pipeline over the 16-image `banana` dataset runs in ~6 minutes on CPU and
 produces a ~37 MB dense `merged.ply`.
-
-Also drop the `:ro` on the `./data` mount in `docker-compose.yml` — OpenSfM
-writes its outputs into the project folder.
 
 ### Running the example reconstruction in the container
 

@@ -1,0 +1,12 @@
+# Overlay for real reconstructions: bakes the OpenSfM CLI into the backend
+# image and makes the data mount writable (OpenSfM writes its outputs into
+# data/opensfm_project/). Shell-agnostic — no env vars needed:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.opensfm.yml up --build
+services:
+  backend:
+    build:
+      args:
+        INSTALL_OPENSFM: "true"
+    volumes:
+      - ./data:/app/data
