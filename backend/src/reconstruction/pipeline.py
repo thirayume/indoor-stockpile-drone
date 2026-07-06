@@ -36,4 +36,4 @@ def run_reconstruction_and_volume(
     )
 
     report("computing volume")
-    return compute_volume(point_cloud)
+    return compute_volume(point_cloud, on_progress=report)

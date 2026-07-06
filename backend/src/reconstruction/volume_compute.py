@@ -16,6 +16,7 @@ GPS-denied reconstruction without GCPs has arbitrary scale: results are in
 (GCPs or a known distance).
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,20 +37,38 @@ class VolumeResult:
     mesh_path: Path | None = None
 
 
-def compute_volume(ply_path: Path, output_dir: Path | None = None) -> VolumeResult:
-    """Full pipeline: load, segment floor, isolate pile, mesh, measure volume."""
+def compute_volume(
+    ply_path: Path,
+    output_dir: Path | None = None,
+    on_progress: Callable[[str], None] | None = None,
+) -> VolumeResult:
+    """Full pipeline: load, segment floor, isolate pile, mesh, measure volume.
+
+    on_progress receives short phase descriptions — the alpha-shape step in
+    particular runs for a while and would otherwise look hung.
+    """
+
+    def report(phase: str) -> None:
+        if on_progress is not None:
+            on_progress(phase)
+
+    report("volume 1/5: loading + cleaning point cloud")
     pcd = load_point_cloud(ply_path)
     scale = _bbox_diagonal(pcd)
 
+    report("volume 2/5: segmenting the floor plane")
     plane, above = segment_floor(pcd, distance_threshold=0.005 * scale)
+    report("volume 3/5: isolating the stockpile cluster")
     pile = isolate_stockpile(above, eps=0.02 * scale)
 
+    report("volume 4/5: building alpha-shape mesh (slowest step)")
     mesh = build_stockpile_mesh(pile, plane, alpha=0.05 * scale)
     mesh_path: Path | None = None
     if mesh is not None:
         mesh_path = (output_dir or ply_path.parent) / "stockpile_mesh.ply"
         o3d.io.write_triangle_mesh(str(mesh_path), mesh)
 
+    report("volume 5/5: integrating volume")
     volume, method = _mesh_volume(mesh) if mesh is not None else (None, None)
     if volume is None:
         volume = grid_volume(pile, plane, cell_size=0.01 * scale)
