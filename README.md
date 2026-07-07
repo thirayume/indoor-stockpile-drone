@@ -67,29 +67,54 @@ Build notes:
   docker compose build --build-arg INSTALL_OPENSFM=true backend
   ```
 
-## Local development
+## Local development (fast — don't rebuild Docker to code)
 
-### Backend
+Docker is for **deploy / final integration**. For day-to-day coding use
+hot reload so you see changes and errors instantly. On Windows, three
+helper scripts wrap the commands below:
 
-```bash
-cd backend
-python -m venv .venv
-# Windows: .venv\Scripts\activate    Linux/macOS: source .venv/bin/activate
-pip install -e ".[dev]"
-uvicorn api.main:app --reload --app-dir src
-pytest
+| Script | What it does |
+|--------|--------------|
+| `.\scripts\dev-web.ps1` | Vite dev server with **hot reload** (browser refreshes on save). Edit `web/src/**` and watch it update. React errors show in the browser console (F12). |
+| `.\scripts\dev-backend.ps1` | uvicorn with `--reload`. Edit `backend/src/**` and it restarts; **Python tracebacks print in the terminal**. |
+| `.\scripts\check.ps1` | Pre-deploy gate: ruff + pytest + web type-check/build. Run this to catch code problems **before** a Docker rebuild. |
+
+### Recommended: hot-reload UI against the Dockerized backend
+
+Best for frontend work — instant UI feedback *and* a fully working backend
+(including OpenSfM reconstruction, which needs the Docker image):
+
+```powershell
+# 1. backend in Docker (published on host :8000, has OpenSfM)
+docker compose -f docker-compose.yml -f docker-compose.opensfm.yml up -d backend
+# 2. frontend hot-reloading locally -> http://localhost:5174
+.\scripts\dev-web.ps1
 ```
 
-### Web
+The dev server proxies `/api/*` to `http://localhost:8000` (override with
+`VITE_API_URL`) and runs on port 5174 (override with `DEV_PORT`) to avoid
+the Docker web port (5273).
 
-```bash
-cd web
-npm install
-npm run dev
+### Backend logic work
+
+```powershell
+docker compose stop backend        # free port 8000
+.\scripts\dev-backend.ps1          # http://localhost:8000, docs at /docs
 ```
 
-The Vite dev server proxies `/api/*` to the backend (default
-`http://localhost:8000`, override with `VITE_API_URL`).
+Every endpoint works except a real reconstruction (`POST /volume/jobs`),
+which needs the OpenSfM CLI that only the Docker image has — locally it
+returns a clean "OpenSfM CLI not found" error. Use the Docker backend for
+actual reconstructions.
+
+### Manual commands (any OS)
+
+```bash
+cd backend && python -m venv .venv && pip install -e ".[dev]"
+uvicorn api.main:app --reload --app-dir src   # backend
+pytest && ruff check src tests                 # test + lint
+cd web && npm install && npm run dev           # frontend
+```
 
 ## Datasets
 
