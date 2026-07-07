@@ -13,6 +13,19 @@ interface Props {
 
 const VIEW_HEIGHT = 440;
 
+/** Open3D writes PLY positions/normals as float64; WebGL cannot render
+ *  Float64 vertex attributes (the draw silently fails), so downcast them. */
+function downcastFloat64Attributes(geometry: THREE.BufferGeometry): void {
+  for (const name of Object.keys(geometry.attributes)) {
+    const attr = geometry.getAttribute(name) as THREE.BufferAttribute;
+    if (attr.array instanceof Float64Array) {
+      const f32 = new THREE.Float32BufferAttribute(Float32Array.from(attr.array), attr.itemSize);
+      f32.normalized = attr.normalized;
+      geometry.setAttribute(name, f32);
+    }
+  }
+}
+
 /** Robust centre/extent from position percentiles: OpenSfM clouds contain
  *  stray far-away points that make the raw bounding box useless for framing. */
 function robustFrame(geometry: THREE.BufferGeometry): { center: THREE.Vector3; extent: number } {
@@ -74,6 +87,7 @@ export default function ReconstructionViewer({ cloudUrl, meshUrl }: Props) {
       fileUrl(cloudUrl),
       (geometry) => {
         if (disposed) return;
+        downcastFloat64Attributes(geometry);
         const { center, extent } = robustFrame(geometry);
         const hasColor = geometry.hasAttribute("color");
         const points = new THREE.Points(
@@ -110,6 +124,7 @@ export default function ReconstructionViewer({ cloudUrl, meshUrl }: Props) {
     if (meshUrl) {
       loader.load(fileUrl(meshUrl), (geometry) => {
         if (disposed) return;
+        downcastFloat64Attributes(geometry);
         geometry.computeVertexNormals();
         const mesh = new THREE.Mesh(
           geometry,
