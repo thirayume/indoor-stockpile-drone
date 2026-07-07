@@ -86,7 +86,11 @@ export default function VolumePanel({ dataset }: Props) {
               (<code>{result.mesh_path}</code>)
             </p>
           )}
-          <ReconstructionViewer cloudUrl="/volume/files/preview.ply" meshUrl={result.mesh_url} />
+          <ReconstructionViewer
+            cloudUrl="/volume/files/preview.ply"
+            meshUrl={result.mesh_url}
+            upVector={result.up_vector}
+          />
         </div>
       )}
     </section>

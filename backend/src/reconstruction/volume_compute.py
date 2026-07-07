@@ -35,6 +35,9 @@ class VolumeResult:
     method: str  # "mesh" (watertight alpha shape) or "grid" (height integration)
     point_cloud_path: Path
     mesh_path: Path | None = None
+    # Oriented floor normal (unit, pointing floor -> pile). The 3D viewer
+    # rotates this to +Y so the scene stands upright instead of upside-down.
+    up_vector: tuple[float, float, float] | None = None
 
 
 def compute_volume(
@@ -84,6 +87,7 @@ def compute_volume(
         method=method,
         point_cloud_path=ply_path,
         mesh_path=mesh_path,
+        up_vector=(float(plane[0]), float(plane[1]), float(plane[2])),
     )
 
 

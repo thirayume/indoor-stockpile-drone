@@ -28,6 +28,7 @@ export interface VolumeResponse {
   point_cloud_url: string;
   mesh_path: string | null;
   mesh_url: string | null;
+  up_vector: number[] | null;
 }
 
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";

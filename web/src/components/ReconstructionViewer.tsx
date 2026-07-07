@@ -9,6 +9,8 @@ interface Props {
   cloudUrl: string;
   /** Backend-relative URL of the stockpile mesh, if one was produced. */
   meshUrl: string | null;
+  /** Oriented floor normal (floor -> pile); rotated to +Y so the scene stands upright. */
+  upVector: number[] | null;
 }
 
 const VIEW_HEIGHT = 440;
@@ -24,6 +26,17 @@ function downcastFloat64Attributes(geometry: THREE.BufferGeometry): void {
       geometry.setAttribute(name, f32);
     }
   }
+}
+
+/** Rotation matrix that maps the reconstruction's up direction to world +Y.
+ *  OpenSfM's GPS-denied frame is arbitrarily oriented (often the pile points
+ *  down), so we stand it upright using the floor normal from volume compute. */
+function uprightMatrix(upVector: number[] | null): THREE.Matrix4 {
+  if (!upVector || upVector.length !== 3) return new THREE.Matrix4();
+  const up = new THREE.Vector3(upVector[0], upVector[1], upVector[2]);
+  if (up.lengthSq() < 1e-9) return new THREE.Matrix4();
+  const q = new THREE.Quaternion().setFromUnitVectors(up.normalize(), new THREE.Vector3(0, 1, 0));
+  return new THREE.Matrix4().makeRotationFromQuaternion(q);
 }
 
 /** Robust centre/extent from position percentiles: OpenSfM clouds contain
@@ -52,7 +65,7 @@ function robustFrame(geometry: THREE.BufferGeometry): { center: THREE.Vector3; e
 
 /** One interactive 3D view showing BOTH result files overlaid:
  *  coloured points = merged.ply (preview), orange mesh = stockpile_mesh.ply. */
-export default function ReconstructionViewer({ cloudUrl, meshUrl }: Props) {
+export default function ReconstructionViewer({ cloudUrl, meshUrl, upVector }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const pointsRef = useRef<THREE.Object3D | null>(null);
   const meshRef = useRef<THREE.Object3D | null>(null);
@@ -82,12 +95,14 @@ export default function ReconstructionViewer({ cloudUrl, meshUrl }: Props) {
 
     let disposed = false;
     const loader = new PLYLoader();
+    const upright = uprightMatrix(upVector);
 
     loader.load(
       fileUrl(cloudUrl),
       (geometry) => {
         if (disposed) return;
         downcastFloat64Attributes(geometry);
+        geometry.applyMatrix4(upright);
         const { center, extent } = robustFrame(geometry);
         const hasColor = geometry.hasAttribute("color");
         const points = new THREE.Points(
@@ -125,6 +140,7 @@ export default function ReconstructionViewer({ cloudUrl, meshUrl }: Props) {
       loader.load(fileUrl(meshUrl), (geometry) => {
         if (disposed) return;
         downcastFloat64Attributes(geometry);
+        geometry.applyMatrix4(upright);
         geometry.computeVertexNormals();
         const mesh = new THREE.Mesh(
           geometry,
@@ -156,7 +172,7 @@ export default function ReconstructionViewer({ cloudUrl, meshUrl }: Props) {
       renderer.dispose();
       mount.removeChild(renderer.domElement);
     };
-  }, [cloudUrl, meshUrl]);
+  }, [cloudUrl, meshUrl, upVector]);
 
   useEffect(() => {
     if (pointsRef.current) pointsRef.current.visible = showPoints;

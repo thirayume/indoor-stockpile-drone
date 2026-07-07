@@ -33,6 +33,9 @@ class VolumeRunResponse(BaseModel):
     point_cloud_url: str
     mesh_path: str | None
     mesh_url: str | None
+    up_vector: list[float] | None = Field(
+        default=None, description="Oriented floor normal; the 3D viewer rotates it to +Y."
+    )
 
 
 class VolumeExampleRequest(BaseModel):
@@ -77,6 +80,7 @@ def _result_payload(result: VolumeResult) -> dict[str, Any]:
         "point_cloud_url": f"/volume/files/{result.point_cloud_path.name}",
         "mesh_path": str(result.mesh_path) if result.mesh_path else None,
         "mesh_url": f"/volume/files/{result.mesh_path.name}" if result.mesh_path else None,
+        "up_vector": list(result.up_vector) if result.up_vector else None,
     }
 
 
