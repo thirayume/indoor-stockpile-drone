@@ -6,6 +6,10 @@ services:
         # Bake the OpenSfM CLI into the image (long C++ build):
         #   INSTALL_OPENSFM=true docker compose build backend
         INSTALL_OPENSFM: ${INSTALL_OPENSFM:-false}
+    # Auto-recover if the process dies. A native crash in a reconstruction
+    # library (Open3D/OpenSfM) can segfault the whole worker; without this the
+    # API would stay down until manually restarted.
+    restart: unless-stopped
     ports:
       # Host port configurable: set BACKEND_PORT in the shell or in a .env
       # file next to this compose file.
@@ -30,6 +34,7 @@ services:
     build:
       context: ./web
       target: serve   # switch to "dev" for the hot-reload dev server
+    restart: unless-stopped
     ports:
       # Host port configurable: set WEB_PORT if 5173 is taken by another app.
       - "${WEB_PORT:-5173}:5173"
