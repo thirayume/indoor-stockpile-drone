@@ -144,6 +144,12 @@ def isolate_stockpile(
     return pcd.select_by_index(np.where(labels == largest)[0])
 
 
+# Alpha-shape/Qhull can segfault on very large or near-coplanar inputs, so
+# the mesh (a nice-to-have visualization) is only attempted below this size;
+# larger piles go straight to the robust NumPy grid integration.
+MAX_ALPHA_POINTS = 30000
+
+
 def build_stockpile_mesh(
     pile: o3d.geometry.PointCloud,
     plane: np.ndarray,
@@ -153,6 +159,8 @@ def build_stockpile_mesh(
 
     Projecting every pile point onto the floor plane and meshing the combined
     set gives the alpha shape a base, so it has a chance of being watertight.
+    Returns None (caller falls back to grid integration) when the input is too
+    large to alpha-shape safely.
     """
     pts = np.asarray(pile.points)
     normal = plane[:3]
@@ -161,6 +169,12 @@ def build_stockpile_mesh(
 
     closed = o3d.geometry.PointCloud()
     closed.points = o3d.utility.Vector3dVector(np.vstack([pts, base]))
+    if len(closed.points) > MAX_ALPHA_POINTS:
+        logger.info(
+            "Pile too large for alpha shape (%d pts); using grid volume",
+            len(closed.points),
+        )
+        return None
     try:
         # Errors only: alpha shapes on scan data emit an "invalid tetra"
         # warning per degenerate cell, easily flooding megabytes of output.
