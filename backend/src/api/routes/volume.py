@@ -55,6 +55,11 @@ class JobRequest(BaseModel):
         default=None, description=f"Defaults to {DEFAULT_EXAMPLE_DATASET!r}."
     )
     use_symlink: bool = True
+    use_exif_gps: bool = Field(
+        default=False,
+        description="Use GPS from EXIF for georeferenced/true-scale results "
+        "(only helps if the dataset's photos carry GPS).",
+    )
 
 
 class JobResponse(BaseModel):
@@ -124,19 +129,24 @@ def start_job(request: JobRequest | None = None) -> JobResponse:
     """
     dataset_id = (request.dataset_id if request else None) or DEFAULT_EXAMPLE_DATASET
     use_symlink = request.use_symlink if request else True
+    use_exif_gps = request.use_exif_gps if request else False
 
     def run(job: Job) -> dict[str, Any]:
         def progress(phase: str) -> None:
             job.progress = phase
 
         result = run_reconstruction_and_volume(
-            dataset_id, use_symlink=use_symlink, on_progress=progress
+            dataset_id, use_symlink=use_symlink, on_progress=progress, use_exif_gps=use_exif_gps
         )
         return _result_payload(result)
 
     job = job_manager.submit(
         kind="reconstruction",
-        params={"dataset_id": dataset_id, "use_symlink": use_symlink},
+        params={
+            "dataset_id": dataset_id,
+            "use_symlink": use_symlink,
+            "use_exif_gps": use_exif_gps,
+        },
         fn=run,
     )
     return _job_response(job)

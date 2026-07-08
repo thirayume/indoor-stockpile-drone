@@ -12,11 +12,13 @@ def run_reconstruction_and_volume(
     dataset_id: str,
     use_symlink: bool = True,
     on_progress: Callable[[str], None] | None = None,
+    use_exif_gps: bool = False,
 ) -> VolumeResult:
     """Prepare the OpenSfM project, run the full pipeline, compute the volume.
 
     on_progress receives human-readable phase descriptions ("opensfm
-    reconstruct (5/9)") — used by the job system.
+    reconstruct (5/9)") — used by the job system. use_exif_gps enables
+    GPS-based alignment/scale when the dataset's EXIF carries coordinates.
 
     Raises FileNotFoundError (dataset/outputs missing), RuntimeError (OpenSfM
     CLI missing), subprocess.CalledProcessError (a pipeline step failed) or
@@ -28,7 +30,7 @@ def run_reconstruction_and_volume(
             on_progress(phase)
 
     report("preparing dataset")
-    prepare_opensfm_project(dataset_id, use_symlink=use_symlink)
+    prepare_opensfm_project(dataset_id, use_symlink=use_symlink, use_exif_gps=use_exif_gps)
 
     point_cloud = run_opensfm_pipeline(
         settings.opensfm_project_dir,

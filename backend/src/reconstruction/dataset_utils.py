@@ -21,20 +21,38 @@ logger = get_logger(__name__)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
 
-# Written to projects that have no config.yaml yet; mirrors the settings
-# shipped in data/opensfm_project/config.yaml (GPS-denied indoor capture).
-DEFAULT_CONFIG = """\
+_CONFIG_COMMON = """\
 camera_projection_type: BROWN
 feature_type: HAHOG
 matcher_type: FLANN
-matching_gps_distance: 0
-matching_gps_neighbors: 0
-align_method: naive
-bundle_use_gps: no
 bundle_use_gcp: no
 depthmap_resolution: 640
 depthmap_min_consistent_views: 3
 """
+
+# GPS-denied (the indoor default): never use GPS for pair selection or
+# alignment. The reconstruction is up to scale (results in model units).
+_CONFIG_NO_GPS = """\
+matching_gps_distance: 0
+matching_gps_neighbors: 0
+align_method: naive
+bundle_use_gps: no
+"""
+
+# GPS-enabled: use EXIF GPS to preselect image pairs and to align/scale the
+# reconstruction, giving georeferenced, true-metre results. Only useful when
+# the images actually carry GPS in EXIF (e.g. brighton_beach; not banana).
+_CONFIG_GPS = """\
+use_altitude_tag: yes
+matching_gps_neighbors: 8
+align_method: auto
+bundle_use_gps: yes
+"""
+
+
+def opensfm_config(use_exif_gps: bool = False) -> str:
+    """OpenSfM config.yaml text, GPS-denied by default (the indoor case)."""
+    return _CONFIG_COMMON + (_CONFIG_GPS if use_exif_gps else _CONFIG_NO_GPS)
 
 
 def find_images_dir(dataset_dir: Path) -> Path | None:
@@ -65,11 +83,13 @@ def prepare_opensfm_project(
     odm_dir: Path | None = None,
     project_dir: Path | None = None,
     use_symlink: bool = True,
+    use_exif_gps: bool = False,
 ) -> None:
     """Stage a dataset into the OpenSfM project (config.yaml + images/).
 
-    Validates the dataset exists under data/odm, ensures the project skeleton
-    exists, then links or copies the images and logs the now-active dataset.
+    Validates the dataset exists under data/odm, writes the OpenSfM config
+    for the chosen GPS mode, then links or copies the images. use_exif_gps
+    only helps when the dataset's photos actually carry GPS in EXIF.
     """
     root = odm_dir or settings.odm_datasets_dir
     available = list_odm_datasets(root)
@@ -81,10 +101,10 @@ def prepare_opensfm_project(
 
     project = project_dir or settings.opensfm_project_dir
     project.mkdir(parents=True, exist_ok=True)
+    # Rewrite config each run so the GPS toggle always takes effect.
     config = project / "config.yaml"
-    if not config.exists():
-        config.write_text(DEFAULT_CONFIG)
-        logger.info("Wrote default config.yaml to %s", config)
+    config.write_text(opensfm_config(use_exif_gps))
+    logger.info("Wrote config.yaml (use_exif_gps=%s) to %s", use_exif_gps, config)
 
     # OpenSfM treats the mere existence of gcp_list.txt as "GCPs provided"
     # and crashes parsing an empty one (StopIteration on the projection

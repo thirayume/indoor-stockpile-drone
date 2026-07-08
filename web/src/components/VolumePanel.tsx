@@ -16,6 +16,7 @@ const POLL_INTERVAL_MS = 1500;
 
 export default function VolumePanel({ dataset }: Props) {
   const [job, setJob] = useState<VolumeJob | null>(null);
+  const [useExifGps, setUseExifGps] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const running = job !== null && (job.status === "queued" || job.status === "running");
@@ -37,7 +38,7 @@ export default function VolumePanel({ dataset }: Props) {
   async function start(datasetId?: string) {
     setError(null);
     try {
-      setJob(await startVolumeJob(datasetId));
+      setJob(await startVolumeJob(datasetId, useExifGps));
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -48,6 +49,17 @@ export default function VolumePanel({ dataset }: Props) {
   return (
     <section>
       <h2>3. Reconstruction &amp; volume</h2>
+      <label style={{ display: "block", fontSize: 13, marginBottom: 8 }}>
+        <input
+          type="checkbox"
+          checked={useExifGps}
+          onChange={(e) => setUseExifGps(e.target.checked)}
+          disabled={running}
+        />{" "}
+        Use GPS from EXIF — georeferenced, true-metre scale (only helps if the
+        dataset's photos carry GPS, e.g. <code>brighton_beach</code>; a no-op
+        for <code>banana</code>).
+      </label>
       <button onClick={() => dataset && start(dataset)} disabled={!dataset || running}>
         Run reconstruction &amp; volume
       </button>{" "}

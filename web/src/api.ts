@@ -92,9 +92,12 @@ export function runOrbitSim(
   return post<OrbitResponse>("/sim/orbit", { dataset_id: datasetId, pattern });
 }
 
-/** Queue a reconstruction job; backend defaults to the example dataset. */
-export function startVolumeJob(datasetId?: string): Promise<VolumeJob> {
-  return post<VolumeJob>("/volume/jobs", datasetId ? { dataset_id: datasetId } : {});
+/** Queue a reconstruction job; backend defaults to the example dataset.
+ *  useExifGps enables GPS-based georeferencing when the photos carry GPS. */
+export function startVolumeJob(datasetId?: string, useExifGps = false): Promise<VolumeJob> {
+  const body: Record<string, unknown> = { use_exif_gps: useExifGps };
+  if (datasetId) body.dataset_id = datasetId;
+  return post<VolumeJob>("/volume/jobs", body);
 }
 
 export function getVolumeJob(jobId: string): Promise<VolumeJob> {
