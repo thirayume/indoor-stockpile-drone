@@ -28,7 +28,7 @@ class VolumeRunRequest(BaseModel):
 class VolumeRunResponse(BaseModel):
     volume_m3: float = Field(description="Model units³ unless the model is GCP-scaled.")
     num_points: int
-    method: str = Field(description='"mesh" (watertight alpha shape) or "grid".')
+    method: str = Field(description='Volume method — "grid" (2.5D height integration).')
     point_cloud_path: str
     point_cloud_url: str
     mesh_path: str | None

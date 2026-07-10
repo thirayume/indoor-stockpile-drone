@@ -32,7 +32,7 @@ logger = get_logger(__name__)
 class VolumeResult:
     volume_m3: float
     num_points: int
-    method: str  # "mesh" (watertight alpha shape) or "grid" (height integration)
+    method: str  # "grid" — 2.5D height integration (the alpha-shape mesh is viz-only)
     point_cloud_path: Path
     mesh_path: Path | None = None
     # Oriented floor normal (unit, pointing floor -> pile). The 3D viewer
@@ -64,18 +64,20 @@ def compute_volume(
     report("volume 3/5: isolating the stockpile cluster")
     pile = isolate_stockpile(above, eps=0.02 * scale)
 
-    report("volume 4/5: building alpha-shape mesh (slowest step)")
+    # Grid integration is pure NumPy — robust for any terrain and the standard
+    # 2.5D method for aerial volumetry. It is always the volume number. (The
+    # earlier mesh-based measurement could segfault Open3D on degenerate scans.)
+    report("volume 4/5: integrating volume (2.5D grid)")
+    volume = grid_volume(pile, plane, cell_size=0.01 * scale)
+    method = "grid"
+
+    # The alpha-shape mesh is a best-effort visualization only, never measured.
+    report("volume 5/5: building visualization mesh")
     mesh = build_stockpile_mesh(pile, plane, alpha=0.05 * scale)
     mesh_path: Path | None = None
     if mesh is not None:
         mesh_path = (output_dir or ply_path.parent) / "stockpile_mesh.ply"
         o3d.io.write_triangle_mesh(str(mesh_path), mesh)
-
-    report("volume 5/5: integrating volume")
-    volume, method = _mesh_volume(mesh) if mesh is not None else (None, None)
-    if volume is None:
-        volume = grid_volume(pile, plane, cell_size=0.01 * scale)
-        method = "grid"
 
     logger.info(
         "Estimated volume %.4f (method=%s) from %d pile points",
@@ -185,17 +187,6 @@ def build_stockpile_mesh(
         return None
     mesh.compute_vertex_normals()
     return mesh
-
-
-def _mesh_volume(mesh: o3d.geometry.TriangleMesh) -> tuple[float | None, str | None]:
-    if not mesh.is_watertight():
-        logger.info("Alpha-shape mesh not watertight; using grid integration")
-        return None, None
-    try:
-        return float(mesh.get_volume()), "mesh"
-    except RuntimeError as exc:
-        logger.warning("Mesh volume failed (%s); using grid integration", exc)
-        return None, None
 
 
 def grid_volume(
