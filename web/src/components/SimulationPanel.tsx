@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { errorMessage, runOrbitSim, type FlightPattern, type OrbitResponse } from "../api";
+import {
+  datasetImageUrl,
+  errorMessage,
+  runOrbitSim,
+  type FlightPattern,
+  type OrbitResponse,
+} from "../api";
+import Lightbox from "./Lightbox";
 import OrbitPlot from "./OrbitPlot";
 
 interface Props {
@@ -10,12 +17,16 @@ export default function SimulationPanel({ dataset }: Props) {
   const [running, setRunning] = useState(false);
   const [pattern, setPattern] = useState<FlightPattern>("orbit");
   const [result, setResult] = useState<OrbitResponse | null>(null);
+  const [complete, setComplete] = useState(false);
+  const [lightbox, setLightbox] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function runFlight() {
     if (!dataset) return;
     setRunning(true);
     setError(null);
+    setComplete(false);
+    setLightbox(null);
     try {
       setResult(await runOrbitSim(dataset, pattern));
     } catch (err) {
@@ -25,23 +36,17 @@ export default function SimulationPanel({ dataset }: Props) {
     }
   }
 
+  const images = result ? result.triggers.map((t) => t.image) : [];
+
   return (
     <section>
       <h2>2. Flight simulation</h2>
       <label style={{ marginRight: 12 }}>
-        <input
-          type="radio"
-          checked={pattern === "orbit"}
-          onChange={() => setPattern("orbit")}
-        />{" "}
+        <input type="radio" checked={pattern === "orbit"} onChange={() => setPattern("orbit")} />{" "}
         orbit (circle the pile)
       </label>
       <label style={{ marginRight: 12 }}>
-        <input
-          type="radio"
-          checked={pattern === "grid"}
-          onChange={() => setPattern("grid")}
-        />{" "}
+        <input type="radio" checked={pattern === "grid"} onChange={() => setPattern("grid")} />{" "}
         grid survey (lawnmower coverage)
       </label>
       <br />
@@ -50,6 +55,7 @@ export default function SimulationPanel({ dataset }: Props) {
       </button>
       {!dataset && <p>Select a dataset first.</p>}
       {error && <p style={{ color: "crimson" }}>{error}</p>}
+
       {result && (
         <div>
           <p>
@@ -61,7 +67,36 @@ export default function SimulationPanel({ dataset }: Props) {
             dataset={result.dataset_id}
             triggers={result.triggers}
             closePath={result.pattern === "orbit"}
+            onComplete={() => setComplete(true)}
           />
+
+          {complete && (
+            <div>
+              <p style={{ fontSize: 13, color: "#444" }}>
+                📸 {images.length} photos captured on this flight — click any to view full size:
+              </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {images.map((name, i) => (
+                  <img
+                    key={name}
+                    src={datasetImageUrl(result.dataset_id, name, 200)}
+                    alt={name}
+                    title={name}
+                    loading="lazy"
+                    onClick={() => setLightbox(i)}
+                    style={{ height: 92, borderRadius: 3, cursor: "pointer", display: "block" }}
+                  />
+                ))}
+              </div>
+              <Lightbox
+                images={images}
+                index={lightbox}
+                srcFor={(name) => datasetImageUrl(result.dataset_id, name, 1600)}
+                onIndexChange={setLightbox}
+                onClose={() => setLightbox(null)}
+              />
+            </div>
+          )}
         </div>
       )}
     </section>

@@ -6,6 +6,8 @@ interface Props {
   triggers: CameraTrigger[];
   /** Close the path back to the first point (true for orbits, false for grid surveys). */
   closePath?: boolean;
+  /** Called once the shutter animation reaches the last frame. */
+  onComplete?: () => void;
 }
 
 const SIZE = 340;
@@ -13,7 +15,7 @@ const PAD = 34;
 const STEP_MS = 500;
 
 /** Top-down flight view with the captured photo and logs synced shot-by-shot. */
-export default function OrbitPlot({ dataset, triggers, closePath = true }: Props) {
+export default function OrbitPlot({ dataset, triggers, closePath = true, onComplete }: Props) {
   const [active, setActive] = useState(0);
   const [playing, setPlaying] = useState(true);
 
@@ -22,6 +24,13 @@ export default function OrbitPlot({ dataset, triggers, closePath = true }: Props
     setActive(0);
     setPlaying(true);
   }, [triggers]);
+
+  // Notify the parent once the flight animation finishes.
+  useEffect(() => {
+    if (!playing && triggers.length > 0 && active === triggers.length - 1) {
+      onComplete?.();
+    }
+  }, [playing, active, triggers.length, onComplete]);
 
   // Step through the shutter sequence once, then stop on the last frame.
   useEffect(() => {
