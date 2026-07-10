@@ -204,6 +204,7 @@ def _downloadable_files() -> dict[str, list[Path]]:
         "merged.ply": [depthmaps / "merged.ply"],
         "reconstruction.ply": [project / "reconstruction.ply"],
         "stockpile_mesh.ply": [depthmaps / "stockpile_mesh.ply", project / "stockpile_mesh.ply"],
+        "segmented.ply": [depthmaps / "segmented.ply", project / "segmented.ply"],
     }
 
 

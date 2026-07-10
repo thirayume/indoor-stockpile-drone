@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from api.routes import datasets, sim, volume
+from api.routes import datasets, segment, sim, volume
 from core.config import settings
 from core.logging import get_logger, setup_logging
 from reconstruction.dataset_utils import list_odm_datasets
@@ -44,6 +44,7 @@ app.add_middleware(
 app.include_router(datasets.router)
 app.include_router(sim.router)
 app.include_router(volume.router)
+app.include_router(segment.router)
 
 
 class HealthResponse(BaseModel):

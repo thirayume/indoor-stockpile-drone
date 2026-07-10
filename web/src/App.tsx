@@ -1,5 +1,6 @@
 import { useState } from "react";
 import DatasetSelector from "./components/DatasetSelector";
+import SegmentationPanel from "./components/SegmentationPanel";
 import SimulationPanel from "./components/SimulationPanel";
 import VolumePanel from "./components/VolumePanel";
 
@@ -23,6 +24,7 @@ export default function App() {
       <DatasetSelector selected={dataset} onSelect={setDataset} />
       <SimulationPanel dataset={dataset} />
       <VolumePanel dataset={dataset} />
+      <SegmentationPanel />
     </main>
   );
 }

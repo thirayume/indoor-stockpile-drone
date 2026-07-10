@@ -116,6 +116,37 @@ export function getVolumeJob(jobId: string): Promise<VolumeJob> {
   return request<VolumeJob>(`/volume/jobs/${jobId}`);
 }
 
+export interface SegObject {
+  label: string;
+  volume_m3: number;
+  num_points: number;
+  north_m: number;
+  east_m: number;
+}
+
+export interface SegResult {
+  counts: Record<string, number>;
+  objects: SegObject[];
+  cloud_url: string;
+  up_vector: number[] | null;
+}
+
+export interface SegJob {
+  job_id: string;
+  status: JobStatus;
+  progress: string | null;
+  error: string | null;
+  result: SegResult | null;
+}
+
+export function startSegmentJob(): Promise<SegJob> {
+  return post<SegJob>("/segment/jobs", {});
+}
+
+export function getSegmentJob(jobId: string): Promise<SegJob> {
+  return request<SegJob>(`/segment/jobs/${jobId}`);
+}
+
 /** Turn a backend-relative download URL (e.g. /volume/files/x.ply) into a link href. */
 export function fileUrl(url: string): string {
   return `${API_BASE}${url}`;

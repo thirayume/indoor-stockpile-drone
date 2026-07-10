@@ -1,4 +1,4 @@
-"""High-level entry point: dataset id in, stockpile volume out."""
+"""High-level entry points: dataset id in, volume/segmentation out."""
 
 import json
 import subprocess
@@ -6,6 +6,7 @@ import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from core.config import settings
 from core.logging import get_logger
@@ -16,20 +17,21 @@ from reconstruction.volume_compute import VolumeResult
 logger = get_logger(__name__)
 
 
-def compute_volume_isolated(
+def _run_isolated_worker(
+    worker_module: str,
     point_cloud: Path,
+    what: str,
     on_progress: Callable[[str], None] | None = None,
-) -> VolumeResult:
-    """Compute the volume in a subprocess so a native crash can't kill the API.
+) -> dict[str, Any]:
+    """Run an Open3D worker in a subprocess so a native crash can't kill the API.
 
-    Open3D may segfault on scenes that aren't real stockpiles; here that
-    surfaces as a clean ValueError instead of taking the whole process down.
+    The worker prints "PROGRESS:<phase>" lines, an optional "ERROR:<msg>", and
+    writes its result JSON. A non-zero/negative exit becomes a clean ValueError.
     """
     with tempfile.TemporaryDirectory() as tmp:
         result_json = Path(tmp) / "result.json"
         proc = subprocess.Popen(
-            [sys.executable, "-m", "reconstruction.volume_worker",
-             str(point_cloud), "-", str(result_json)],
+            [sys.executable, "-m", worker_module, str(point_cloud), "-", str(result_json)],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -44,26 +46,46 @@ def compute_volume_isolated(
             elif line.startswith("ERROR:"):
                 error_msg = line[len("ERROR:"):]
             elif line:
-                logger.info("volume worker: %s", line)
+                logger.info("%s: %s", worker_module, line)
         code = proc.wait()
 
+        # Read the result before the temp dir is cleaned up on block exit.
         if code == 0:
-            data = json.loads(result_json.read_text())
-            return VolumeResult(
-                volume_m3=data["volume_m3"],
-                num_points=data["num_points"],
-                method=data["method"],
-                point_cloud_path=Path(data["point_cloud_path"]),
-                mesh_path=Path(data["mesh_path"]) if data["mesh_path"] else None,
-                up_vector=tuple(data["up_vector"]) if data["up_vector"] else None,
-            )
+            return json.loads(result_json.read_text())
         if error_msg is not None:
             raise ValueError(error_msg)
-        # Negative code = killed by a signal (e.g. -11 SIGSEGV).
         raise ValueError(
-            f"volume computation crashed (exit {code}) — the reconstruction "
-            "may not contain a well-defined stockpile above a floor plane."
+            f"{what} crashed (exit {code}) — the reconstruction may be unsuitable "
+            "(no well-defined stockpile / objects above a floor plane)."
         )
+
+
+def compute_volume_isolated(
+    point_cloud: Path,
+    on_progress: Callable[[str], None] | None = None,
+) -> VolumeResult:
+    """Compute the volume in a subprocess (Open3D can segfault on odd scenes)."""
+    data = _run_isolated_worker(
+        "reconstruction.volume_worker", point_cloud, "volume computation", on_progress
+    )
+    return VolumeResult(
+        volume_m3=data["volume_m3"],
+        num_points=data["num_points"],
+        method=data["method"],
+        point_cloud_path=Path(data["point_cloud_path"]),
+        mesh_path=Path(data["mesh_path"]) if data["mesh_path"] else None,
+        up_vector=tuple(data["up_vector"]) if data["up_vector"] else None,
+    )
+
+
+def run_segmentation_isolated(
+    point_cloud: Path,
+    on_progress: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Segment the scene (trees/roofs) in a subprocess; returns the raw dict."""
+    return _run_isolated_worker(
+        "reconstruction.segment_worker", point_cloud, "segmentation", on_progress
+    )
 
 
 def run_reconstruction_and_volume(
@@ -73,10 +95,6 @@ def run_reconstruction_and_volume(
     use_exif_gps: bool = False,
 ) -> VolumeResult:
     """Prepare the OpenSfM project, run the full pipeline, compute the volume.
-
-    on_progress receives human-readable phase descriptions ("opensfm
-    reconstruct (5/9)") — used by the job system. use_exif_gps enables
-    GPS-based alignment/scale when the dataset's EXIF carries coordinates.
 
     Raises FileNotFoundError (dataset/outputs missing), RuntimeError (OpenSfM
     CLI missing), subprocess.CalledProcessError (a pipeline step failed) or

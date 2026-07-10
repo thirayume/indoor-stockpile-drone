@@ -11,6 +11,8 @@ interface Props {
   meshUrl: string | null;
   /** Oriented floor normal (floor -> pile); rotated to +Y so the scene stands upright. */
   upVector: number[] | null;
+  /** Label for the point-cloud layer toggle. */
+  cloudLabel?: React.ReactNode;
 }
 
 const VIEW_HEIGHT = 440;
@@ -65,7 +67,7 @@ function robustFrame(geometry: THREE.BufferGeometry): { center: THREE.Vector3; e
 
 /** One interactive 3D view showing BOTH result files overlaid:
  *  coloured points = merged.ply (preview), orange mesh = stockpile_mesh.ply. */
-export default function ReconstructionViewer({ cloudUrl, meshUrl, upVector }: Props) {
+export default function ReconstructionViewer({ cloudUrl, meshUrl, upVector, cloudLabel }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const pointsRef = useRef<THREE.Object3D | null>(null);
   const meshRef = useRef<THREE.Object3D | null>(null);
@@ -183,21 +185,28 @@ export default function ReconstructionViewer({ cloudUrl, meshUrl, upVector }: Pr
 
   return (
     <div style={{ margin: "12px 0" }}>
-      <p style={{ fontSize: 13, color: "#444", marginBottom: 4 }}>
-        One view, both result files overlaid — toggle each layer:
-      </p>
       <label style={{ fontSize: 13, marginRight: 16 }}>
         <input
           type="checkbox"
           checked={showPoints}
           onChange={(e) => setShowPoints(e.target.checked)}
         />{" "}
-        point cloud (<code>merged.ply</code>, coloured dots — the reconstructed scene)
+        {cloudLabel ?? (
+          <>
+            point cloud (<code>merged.ply</code>, coloured dots — the reconstructed scene)
+          </>
+        )}
       </label>
-      <label style={{ fontSize: 13 }}>
-        <input type="checkbox" checked={showMesh} onChange={(e) => setShowMesh(e.target.checked)} />{" "}
-        stockpile mesh (<code>stockpile_mesh.ply</code>, orange — the measured volume)
-      </label>
+      {meshUrl && (
+        <label style={{ fontSize: 13 }}>
+          <input
+            type="checkbox"
+            checked={showMesh}
+            onChange={(e) => setShowMesh(e.target.checked)}
+          />{" "}
+          stockpile mesh (<code>stockpile_mesh.ply</code>, orange — the measured volume)
+        </label>
+      )}
       <p style={{ fontSize: 12, color: "#888", margin: "4px 0" }}>{status}</p>
       <div ref={mountRef} style={{ width: "100%", height: VIEW_HEIGHT }} />
       <p style={{ fontSize: 12, color: "#666" }}>
