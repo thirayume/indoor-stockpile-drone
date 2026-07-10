@@ -19,6 +19,7 @@ from typing import TypeVar
 
 from core.config import settings
 from core.logging import get_logger
+from reconstruction.dataset_utils import dataset_image_names
 from sim.sitl_runner import is_sitl_reachable
 
 logger = get_logger(__name__)
@@ -33,6 +34,7 @@ class CameraTrigger:
     east_m: float
     up_m: float
     yaw_deg: float
+    image: str  # dataset photo "captured" at this pose
 
 
 @dataclass
@@ -44,11 +46,12 @@ class SimResult:
     logs: list[str] = field(default_factory=list)
 
 
-def orbit_poses(radius_m: float, altitude_m: float, num_triggers: int) -> list[CameraTrigger]:
-    """Camera poses evenly spaced on a circle, each facing the orbit centre."""
+def orbit_poses(radius_m: float, altitude_m: float, images: list[str]) -> list[CameraTrigger]:
+    """One pose per dataset image, evenly spaced on a circle facing the centre."""
+    n = len(images)
     poses: list[CameraTrigger] = []
-    for i in range(num_triggers):
-        angle = 2 * math.pi * i / num_triggers
+    for i, image in enumerate(images):
+        angle = 2 * math.pi * i / n
         poses.append(
             CameraTrigger(
                 index=i,
@@ -56,56 +59,78 @@ def orbit_poses(radius_m: float, altitude_m: float, num_triggers: int) -> list[C
                 east_m=radius_m * math.sin(angle),
                 up_m=altitude_m,
                 yaw_deg=math.degrees(angle + math.pi) % 360.0,
+                image=image,
             )
         )
     return poses
 
 
-def grid_poses(extent_m: float, spacing_m: float, altitude_m: float) -> list[CameraTrigger]:
-    """Boustrophedon (lawnmower) survey over a square of side extent_m.
+def grid_poses(extent_m: float, altitude_m: float, images: list[str]) -> list[CameraTrigger]:
+    """Boustrophedon (lawnmower) survey with one pose per dataset image.
 
-    Alternate rows fly east/west; yaw is the direction of travel and the
-    camera looks straight down — the standard mapping/coverage pattern.
-    Works indoors: poses are local NED offsets, no GPS semantics involved.
+    The grid is sized to hold exactly len(images) shots (roughly square);
+    alternate rows fly east/west with a nadir (straight-down) camera — the
+    standard mapping pattern. Local NED offsets, no GPS semantics.
     """
+    n = len(images)
+    cols = max(1, round(math.sqrt(n)))
+    rows = math.ceil(n / cols)
+    xs = _linspace(-extent_m / 2, extent_m / 2, cols)
+    ys = _linspace(-extent_m / 2, extent_m / 2, rows)
+
     poses: list[CameraTrigger] = []
-    half = extent_m / 2
-    steps = [-half + i * spacing_m for i in range(int(extent_m / spacing_m) + 1)]
-    steps = [s for s in steps if s <= half + 1e-9]
-    index = 0
-    for row, north in enumerate(steps):
-        columns = list(reversed(steps)) if row % 2 else steps
+    for row, north in enumerate(ys):
+        columns = list(reversed(xs)) if row % 2 else xs
         heading = 270.0 if row % 2 else 90.0  # west on odd rows, east on even
         for east in columns:
+            if len(poses) >= n:
+                break
             poses.append(
                 CameraTrigger(
-                    index=index, north_m=north, east_m=east, up_m=altitude_m, yaw_deg=heading
+                    index=len(poses),
+                    north_m=north,
+                    east_m=east,
+                    up_m=altitude_m,
+                    yaw_deg=heading,
+                    image=images[len(poses)],
                 )
             )
-            index += 1
     return poses
+
+
+def _linspace(lo: float, hi: float, count: int) -> list[float]:
+    if count <= 1:
+        return [(lo + hi) / 2]
+    step = (hi - lo) / (count - 1)
+    return [lo + i * step for i in range(count)]
 
 
 async def run_orbit_sim(
     dataset_id: str,
     radius_m: float = 5.0,
     altitude_m: float = 3.0,
-    num_triggers: int = 24,
     trigger_interval_s: float = 2.0,
     pattern: str = "orbit",
-    spacing_m: float = 2.0,
 ) -> SimResult:
-    """Fly (or simulate) a capture pattern and collect camera trigger events.
+    """Fly (or simulate) a capture pattern, one shot per dataset image.
+
+    The number of camera triggers equals the dataset's image count, and each
+    trigger is tagged with the photo captured at that pose — so the simulated
+    flight matches the data actually used for reconstruction.
 
     pattern "orbit": circle of radius_m around the pile, cameras facing it.
-    pattern "grid":  lawnmower survey over a square of side 2 * radius_m
-                     with spacing_m between rows/shots (coverage mapping).
+    pattern "grid":  lawnmower survey over a square of side 2 * radius_m.
     """
+    images = dataset_image_names(dataset_id)
+    if not images:
+        raise ValueError(f"dataset {dataset_id!r} has no images to capture")
+
     if pattern == "grid":
-        poses = grid_poses(extent_m=radius_m * 2, spacing_m=spacing_m, altitude_m=altitude_m)
+        poses = grid_poses(extent_m=radius_m * 2, altitude_m=altitude_m, images=images)
     else:
-        poses = orbit_poses(radius_m, altitude_m, num_triggers)
+        poses = orbit_poses(radius_m, altitude_m, images)
     logs: list[str] = []
+    _log(logs, f"Capturing {len(images)} photos from dataset {dataset_id!r} ({pattern})")
 
     if _mavsdk_available() and is_sitl_reachable(timeout_s=1.0):
         _log(logs, f"SITL reachable on {settings.sitl_connection_url} — flying via MAVSDK")
@@ -117,7 +142,7 @@ async def run_orbit_sim(
             _log(logs, _trigger_message(pose))
         mode = "offline"
 
-    _log(logs, f"Orbit complete: {len(poses)} camera triggers")
+    _log(logs, f"Flight complete: {len(poses)} camera triggers")
     return SimResult(
         dataset_id=dataset_id,
         mode=mode,
@@ -212,6 +237,6 @@ def _log(logs: list[str], message: str) -> None:
 
 def _trigger_message(pose: CameraTrigger) -> str:
     return (
-        f"Camera trigger {pose.index} at N {pose.north_m:.2f} m, "
+        f"Shutter {pose.index}: captured {pose.image} at N {pose.north_m:.2f} m, "
         f"E {pose.east_m:.2f} m, alt {pose.up_m:.2f} m, yaw {pose.yaw_deg:.1f} deg"
     )

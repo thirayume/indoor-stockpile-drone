@@ -7,6 +7,7 @@ export interface CameraTrigger {
   east_m: number;
   up_m: number;
   yaw_deg: number;
+  image: string;
 }
 
 export type FlightPattern = "orbit" | "grid";

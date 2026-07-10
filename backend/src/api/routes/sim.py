@@ -12,13 +12,11 @@ class OrbitRequest(BaseModel):
     dataset_id: str
     pattern: Literal["orbit", "grid"] = Field(
         default="orbit",
-        description='"orbit" circles the pile; "grid" flies a lawnmower survey '
-        "over a square of side 2 x radius_m.",
+        description='"orbit" circles the pile; "grid" flies a lawnmower survey. '
+        "One shot is captured per dataset image.",
     )
     radius_m: float = Field(default=5.0, gt=0)
     altitude_m: float = Field(default=3.0, gt=0)
-    num_triggers: int = Field(default=24, ge=1, le=1000, description="orbit pattern only")
-    spacing_m: float = Field(default=2.0, gt=0.2, description="grid pattern only")
     trigger_interval_s: float = Field(default=2.0, gt=0, le=60)
 
 
@@ -28,6 +26,7 @@ class CameraTriggerModel(BaseModel):
     east_m: float
     up_m: float
     yaw_deg: float
+    image: str
 
 
 class OrbitResponse(BaseModel):
@@ -47,11 +46,11 @@ async def run_orbit(request: OrbitRequest) -> OrbitResponse:
             dataset_id=request.dataset_id,
             radius_m=request.radius_m,
             altitude_m=request.altitude_m,
-            num_triggers=request.num_triggers,
             trigger_interval_s=request.trigger_interval_s,
             pattern=request.pattern,
-            spacing_m=request.spacing_m,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -62,7 +61,8 @@ async def run_orbit(request: OrbitRequest) -> OrbitResponse:
         num_triggers=result.num_triggers,
         triggers=[
             CameraTriggerModel(
-                index=t.index, north_m=t.north_m, east_m=t.east_m, up_m=t.up_m, yaw_deg=t.yaw_deg
+                index=t.index, north_m=t.north_m, east_m=t.east_m,
+                up_m=t.up_m, yaw_deg=t.yaw_deg, image=t.image,
             )
             for t in result.triggers
         ],

@@ -66,6 +66,19 @@ def find_images_dir(dataset_dir: Path) -> Path | None:
     return None
 
 
+def dataset_image_names(dataset_id: str, odm_dir: Path | None = None) -> list[str]:
+    """Sorted image filenames for a dataset (empty if it has none)."""
+    root = odm_dir or settings.odm_datasets_dir
+    images_dir = find_images_dir(root / dataset_id)
+    if images_dir is None:
+        return []
+    return sorted(
+        p.name
+        for p in images_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+    )
+
+
 def list_odm_datasets(odm_dir: Path | None = None) -> list[str]:
     """List dataset folders under data/odm/ that actually contain images."""
     root = odm_dir or settings.odm_datasets_dir

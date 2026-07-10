@@ -54,21 +54,14 @@ export default function SimulationPanel({ dataset }: Props) {
         <div>
           <p>
             {result.pattern === "grid" ? "Grid survey" : "Orbit"} for{" "}
-            <strong>{result.dataset_id}</strong>: {result.num_triggers} camera triggers (
-            <code>{result.mode}</code> mode).
+            <strong>{result.dataset_id}</strong>: capturing {result.num_triggers} photos —
+            one per dataset image (<code>{result.mode}</code> mode).
           </p>
-          <OrbitPlot triggers={result.triggers} closePath={result.pattern === "orbit"} />
-          <pre
-            style={{
-              maxHeight: 200,
-              overflowY: "auto",
-              background: "#f5f5f5",
-              padding: 8,
-              fontSize: 12,
-            }}
-          >
-            {result.logs.join("\n")}
-          </pre>
+          <OrbitPlot
+            dataset={result.dataset_id}
+            triggers={result.triggers}
+            closePath={result.pattern === "orbit"}
+          />
         </div>
       )}
     </section>

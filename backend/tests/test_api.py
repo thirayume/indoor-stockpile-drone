@@ -78,31 +78,43 @@ def test_volume_example_success_response_shape(monkeypatch) -> None:
     assert body["ply_url"] == "/volume/files/merged.ply"
 
 
-def test_grid_survey_pattern() -> None:
-    response = client.post(
-        "/sim/orbit",
-        json={"dataset_id": "demo", "pattern": "grid", "radius_m": 5.0, "spacing_m": 2.5},
-    )
+def _fake_images(n: int) -> list[str]:
+    return [f"IMG_{i:03d}.JPG" for i in range(n)]
+
+
+def test_grid_survey_matches_dataset_images(monkeypatch) -> None:
+    from sim import orbit_capture
+
+    monkeypatch.setattr(orbit_capture, "dataset_image_names", lambda _id: _fake_images(9))
+    response = client.post("/sim/orbit", json={"dataset_id": "demo", "pattern": "grid"})
     assert response.status_code == 200
     body = response.json()
     assert body["pattern"] == "grid"
-    assert body["num_triggers"] == 25  # 5 rows x 5 columns over a 10 m square
-    assert len({t["north_m"] for t in body["triggers"]}) == 5
-    # serpentine: first row flies east, second row flies west
+    assert body["num_triggers"] == 9  # one shot per dataset image
+    assert [t["image"] for t in body["triggers"]] == _fake_images(9)
+    # serpentine: first row flies east, second row flies west (3x3 grid)
     assert body["triggers"][0]["yaw_deg"] == 90.0
-    assert body["triggers"][5]["yaw_deg"] == 270.0
+    assert body["triggers"][3]["yaw_deg"] == 270.0
 
 
-def test_orbit_sim() -> None:
-    response = client.post("/sim/orbit", json={"dataset_id": "demo", "num_triggers": 8})
+def test_orbit_sim_matches_dataset_images(monkeypatch) -> None:
+    from sim import orbit_capture
+
+    monkeypatch.setattr(orbit_capture, "dataset_image_names", lambda _id: _fake_images(8))
+    response = client.post("/sim/orbit", json={"dataset_id": "demo"})
     assert response.status_code == 200
     body = response.json()
     assert body["dataset_id"] == "demo"
-    assert body["num_triggers"] == 8
+    assert body["num_triggers"] == 8  # one shot per dataset image
     assert body["mode"] in ("offline", "mavsdk")
-    # at least one log line per camera trigger, plus start/end lines
-    assert len(body["logs"]) >= 8
-    assert any("Camera trigger" in line for line in body["logs"])
-    assert len(body["triggers"]) == 8
-    first = body["triggers"][0]
-    assert {"index", "north_m", "east_m", "up_m", "yaw_deg"} <= set(first)
+    assert any("Shutter" in line for line in body["logs"])
+    assert [t["image"] for t in body["triggers"]] == _fake_images(8)
+    assert {"index", "north_m", "east_m", "up_m", "yaw_deg", "image"} <= set(body["triggers"][0])
+
+
+def test_orbit_sim_no_images_returns_422(monkeypatch) -> None:
+    from sim import orbit_capture
+
+    monkeypatch.setattr(orbit_capture, "dataset_image_names", lambda _id: [])
+    response = client.post("/sim/orbit", json={"dataset_id": "empty"})
+    assert response.status_code == 422
