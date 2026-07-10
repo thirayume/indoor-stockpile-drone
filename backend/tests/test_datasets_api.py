@@ -43,6 +43,14 @@ def test_get_image_thumbnail(fake_dataset) -> None:
         assert im.width == 32
 
 
+def test_dataset_info_object_scan_is_orbit(fake_dataset) -> None:
+    # The fixture writes a plain JPEG with no GPS EXIF -> object scan -> orbit.
+    body = client.get(f"/datasets/{fake_dataset}/info").json()
+    assert body["image_count"] == 1
+    assert body["has_gps"] is False
+    assert body["patterns"] == ["orbit"]
+
+
 def test_unknown_dataset_returns_404(fake_dataset) -> None:
     assert client.get("/datasets/nope/images").status_code == 404
 

@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   datasetImageUrl,
   errorMessage,
+  fetchDatasetInfo,
   runOrbitSim,
   type FlightPattern,
   type OrbitResponse,
@@ -13,13 +14,32 @@ interface Props {
   dataset: string | null;
 }
 
+const ALL_PATTERNS: FlightPattern[] = ["orbit", "grid"];
+
 export default function SimulationPanel({ dataset }: Props) {
   const [running, setRunning] = useState(false);
   const [pattern, setPattern] = useState<FlightPattern>("orbit");
+  const [allowed, setAllowed] = useState<FlightPattern[]>(ALL_PATTERNS);
   const [result, setResult] = useState<OrbitResponse | null>(null);
   const [complete, setComplete] = useState(false);
   const [lightbox, setLightbox] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Restrict the flight pattern to what suits the dataset: aerial surveys
+  // (GPS) -> grid, close-up object scans -> orbit.
+  useEffect(() => {
+    if (!dataset) {
+      setAllowed(ALL_PATTERNS);
+      return;
+    }
+    fetchDatasetInfo(dataset)
+      .then((info) => {
+        const patterns = info.patterns.length ? info.patterns : ALL_PATTERNS;
+        setAllowed(patterns);
+        setPattern((p) => (patterns.includes(p) ? p : patterns[0]));
+      })
+      .catch(() => setAllowed(ALL_PATTERNS));
+  }, [dataset]);
 
   async function runFlight() {
     if (!dataset) return;
@@ -41,14 +61,30 @@ export default function SimulationPanel({ dataset }: Props) {
   return (
     <section>
       <h2>2. Flight simulation</h2>
-      <label style={{ marginRight: 12 }}>
-        <input type="radio" checked={pattern === "orbit"} onChange={() => setPattern("orbit")} />{" "}
+      <label style={{ marginRight: 12, opacity: allowed.includes("orbit") ? 1 : 0.4 }}>
+        <input
+          type="radio"
+          checked={pattern === "orbit"}
+          disabled={!allowed.includes("orbit")}
+          onChange={() => setPattern("orbit")}
+        />{" "}
         orbit (circle the pile)
       </label>
-      <label style={{ marginRight: 12 }}>
-        <input type="radio" checked={pattern === "grid"} onChange={() => setPattern("grid")} />{" "}
+      <label style={{ marginRight: 12, opacity: allowed.includes("grid") ? 1 : 0.4 }}>
+        <input
+          type="radio"
+          checked={pattern === "grid"}
+          disabled={!allowed.includes("grid")}
+          onChange={() => setPattern("grid")}
+        />{" "}
         grid survey (lawnmower coverage)
       </label>
+      {dataset && allowed.length === 1 && (
+        <span style={{ fontSize: 12, color: "#888" }}>
+          {" "}
+          — {allowed[0] === "grid" ? "aerial survey (grid)" : "object scan (orbit)"} for this dataset
+        </span>
+      )}
       <br />
       <button onClick={runFlight} disabled={!dataset || running} style={{ marginTop: 8 }}>
         {running ? "Flying…" : "Run flight simulation"}

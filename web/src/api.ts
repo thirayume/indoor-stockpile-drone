@@ -80,6 +80,17 @@ export function fetchDatasetImages(datasetId: string): Promise<string[]> {
   ).then((body) => body.images);
 }
 
+export interface DatasetInfo {
+  dataset_id: string;
+  image_count: number;
+  has_gps: boolean;
+  patterns: FlightPattern[];
+}
+
+export function fetchDatasetInfo(datasetId: string): Promise<DatasetInfo> {
+  return request<DatasetInfo>(`/datasets/${encodeURIComponent(datasetId)}/info`);
+}
+
 /** URL of one dataset image; pass width for a server-side thumbnail. */
 export function datasetImageUrl(datasetId: string, name: string, width?: number): string {
   const suffix = width ? `?width=${width}` : "";
