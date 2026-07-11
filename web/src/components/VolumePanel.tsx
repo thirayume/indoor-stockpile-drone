@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import {
   errorMessage,
+  fetchDatasetInfo,
   fileUrl,
   getVolumeJob,
   startVolumeJob,
   type VolumeJob,
 } from "../api";
+import { estimateReconstructionSeconds, formatMMSS, useElapsedSeconds } from "../progress";
 import ReconstructionViewer from "./ReconstructionViewer";
 
 interface Props {
@@ -17,9 +19,19 @@ const POLL_INTERVAL_MS = 1500;
 export default function VolumePanel({ dataset }: Props) {
   const [job, setJob] = useState<VolumeJob | null>(null);
   const [useExifGps, setUseExifGps] = useState(false);
+  const [imageCount, setImageCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const running = job !== null && (job.status === "queued" || job.status === "running");
+  const elapsed = useElapsedSeconds(job?.started_at ?? null, running);
+
+  // Image count drives the rough time estimate.
+  useEffect(() => {
+    if (!dataset) return;
+    fetchDatasetInfo(dataset)
+      .then((info) => setImageCount(info.image_count))
+      .catch(() => setImageCount(0));
+  }, [dataset]);
 
   // Poll the active job; each state update schedules the next poll, and no
   // timer is armed once the job reaches a terminal state.
@@ -68,10 +80,26 @@ export default function VolumePanel({ dataset }: Props) {
       </button>
       {error && <p style={{ color: "crimson" }}>{error}</p>}
       {job && running && (
-        <p>
-          Job <code>{job.job_id}</code> ({job.dataset_id}): <strong>{job.status}</strong>
-          {job.progress && <> — {job.progress}</>}
-        </p>
+        <div style={{ margin: "6px 0" }}>
+          <p style={{ margin: "2px 0" }}>
+            Job <code>{job.job_id}</code> ({job.dataset_id}): <strong>{job.status}</strong>
+            {job.progress && <> — {job.progress}</>}
+          </p>
+          <p style={{ margin: "2px 0", fontSize: 13, color: "#555" }}>
+            ⏱ elapsed <strong>{formatMMSS(elapsed)}</strong>
+            {imageCount > 0 &&
+              (() => {
+                const est = estimateReconstructionSeconds(imageCount);
+                const remaining = est - elapsed;
+                return remaining > 5 ? (
+                  <> · ~{formatMMSS(remaining)} remaining (rough, {imageCount} photos)</>
+                ) : (
+                  <> · finishing up (taking longer than estimated for {imageCount} photos)</>
+                );
+              })()}
+            {" — still working, don't refresh"}
+          </p>
+        </div>
       )}
       {job?.status === "failed" && (
         <p style={{ color: "crimson" }}>

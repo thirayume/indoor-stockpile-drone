@@ -4,7 +4,7 @@ matcher_type: FLANN
 bundle_use_gcp: no
 depthmap_resolution: 640
 depthmap_min_consistent_views: 3
-use_altitude_tag: yes
-matching_gps_neighbors: 8
-align_method: auto
-bundle_use_gps: yes
+matching_gps_distance: 0
+matching_gps_neighbors: 0
+align_method: naive
+bundle_use_gps: no

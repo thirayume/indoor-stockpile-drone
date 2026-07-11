@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { errorMessage, getSegmentJob, startSegmentJob, type SegJob } from "../api";
+import { formatMMSS, useElapsedSeconds } from "../progress";
 import ReconstructionViewer from "./ReconstructionViewer";
 
 const POLL_INTERVAL_MS = 1500;
@@ -16,9 +17,11 @@ function sumVolume(objects: { label: string; volume_m3: number }[], label: strin
 /** Segment the current reconstruction into trees/roofs, with counts + volume. */
 export default function SegmentationPanel() {
   const [job, setJob] = useState<SegJob | null>(null);
+  const [startedAt, setStartedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const running = job !== null && (job.status === "queued" || job.status === "running");
+  const elapsed = useElapsedSeconds(startedAt, running);
 
   useEffect(() => {
     if (!job || !running) return;
@@ -34,6 +37,7 @@ export default function SegmentationPanel() {
 
   async function run() {
     setError(null);
+    setStartedAt(new Date().toISOString());
     try {
       setJob(await startSegmentJob());
     } catch (err) {
@@ -58,7 +62,8 @@ export default function SegmentationPanel() {
       {job && running && (
         <p>
           <strong>{job.status}</strong>
-          {job.progress && <> — {job.progress}</>}
+          {job.progress && <> — {job.progress}</>} · ⏱ {formatMMSS(elapsed)}
+          {" — still working"}
         </p>
       )}
       {job?.status === "failed" && (
