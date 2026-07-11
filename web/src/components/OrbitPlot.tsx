@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
-import { datasetImageUrl, type CameraTrigger } from "../api";
+import type { CameraTrigger } from "../api";
 
 interface Props {
-  dataset: string;
   triggers: CameraTrigger[];
   /** Close the path back to the first point (true for orbits, false for grid surveys). */
   closePath?: boolean;
@@ -14,8 +13,8 @@ const SIZE = 340;
 const PAD = 34;
 const STEP_MS = 500;
 
-/** Top-down flight view with the captured photo and logs synced shot-by-shot. */
-export default function OrbitPlot({ dataset, triggers, closePath = true, onComplete }: Props) {
+/** Top-down flight view with the per-shutter log revealed in sync. */
+export default function OrbitPlot({ triggers, closePath = true, onComplete }: Props) {
   const [active, setActive] = useState(0);
   const [playing, setPlaying] = useState(true);
 
@@ -97,7 +96,9 @@ export default function OrbitPlot({ dataset, triggers, closePath = true, onCompl
         </svg>
         <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>
           {playing ? (
-            <>📷 shutter {current.index + 1} / {triggers.length}</>
+            <>
+              📷 shutter {current.index + 1} / {triggers.length}
+            </>
           ) : (
             <>
               ✅ flight complete — {triggers.length} photos captured.{" "}
@@ -114,37 +115,28 @@ export default function OrbitPlot({ dataset, triggers, closePath = true, onCompl
         </div>
       </div>
 
-      {/* Photo captured at the current shutter */}
-      <div style={{ width: 260 }}>
-        <div style={{ fontSize: 12, color: "#444", marginBottom: 4 }}>
-          Photo captured now: <code>{current.image}</code>
-        </div>
-        <img
-          key={current.image}
-          src={datasetImageUrl(dataset, current.image, 400)}
-          alt={current.image}
-          style={{ width: "100%", borderRadius: 4, border: "1px solid #ddd", display: "block" }}
-        />
-        <pre
-          style={{
-            maxHeight: 150,
-            overflowY: "auto",
-            background: "#f5f5f5",
-            padding: 6,
-            fontSize: 11,
-            marginTop: 6,
-          }}
-        >
-          {triggers
-            .slice(0, shown)
-            .map(
-              (t) =>
-                `Shutter ${t.index}: ${t.image}  ` +
-                `N ${t.north_m.toFixed(1)} E ${t.east_m.toFixed(1)} yaw ${t.yaw_deg.toFixed(0)}°`
-            )
-            .join("\n")}
-        </pre>
-      </div>
+      {/* Per-shutter capture log, same height as the plot */}
+      <pre
+        style={{
+          height: SIZE,
+          width: 320,
+          overflowY: "auto",
+          background: "#f5f5f5",
+          padding: 8,
+          margin: 0,
+          fontSize: 11,
+          boxSizing: "border-box",
+        }}
+      >
+        {triggers
+          .slice(0, shown)
+          .map(
+            (t) =>
+              `Shutter ${t.index}: ${t.image}  ` +
+              `N ${t.north_m.toFixed(1)} E ${t.east_m.toFixed(1)} yaw ${t.yaw_deg.toFixed(0)}°`
+          )
+          .join("\n")}
+      </pre>
     </div>
   );
 }
