@@ -37,9 +37,9 @@ _COLORS = {
     "roof": (0.95, 0.50, 0.15),
     "other": (0.40, 0.50, 0.90),
 }
-GREEN_EXG = 0.03  # mean ExG above this -> vegetation (tree)
-ROUGH_SV = 0.010  # PCA surface variation above this -> volumetric/rough (tree)
-MIN_CLUSTER_POINTS = 40
+GREEN_EXG = 0.02  # per-point ExG above this -> vegetation (tree)
+FLAT_DOT = 0.80  # |normal · up| above this -> horizontal surface (roof-like)
+MIN_CLUSTER_POINTS = 30
 
 
 @dataclass
@@ -63,16 +63,6 @@ class SegmentationResult:
         self.objects_total = len(self.objects)
 
 
-def _surface_variation(points: np.ndarray) -> float:
-    """PCA smallest-eigenvalue ratio: ~0 for a flat surface, larger for volumetric."""
-    if len(points) < 3:
-        return 1.0
-    cov = np.cov((points - points.mean(axis=0)).T)
-    eig = np.clip(np.linalg.eigvalsh(cov), 0, None)
-    total = eig.sum()
-    return float(eig[0] / total) if total > 0 else 1.0
-
-
 def _cluster_volume(points: np.ndarray, plane: np.ndarray, cell_size: float) -> float:
     """2.5D grid volume of a point set above the floor plane."""
     normal = plane[:3]
@@ -87,17 +77,6 @@ def _cluster_volume(points: np.ndarray, plane: np.ndarray, cell_size: float) -> 
     return float(cell_size**2 * np.sum(sums / counts))
 
 
-def _classify(mean_exg: float, surface_variation: float) -> str:
-    """Trees are green or geometrically rough; flat non-green blobs are roofs.
-
-    Aerial reconstructions are thin (2.5D), so surface variation is only a
-    weak secondary cue — greenness is the primary tree signal.
-    """
-    if mean_exg > GREEN_EXG or surface_variation > ROUGH_SV:
-        return "tree"
-    return "roof"
-
-
 def segment_scene(
     ply_path: Path,
     output_dir: Path | None = None,
@@ -107,46 +86,61 @@ def segment_scene(
         if on_progress is not None:
             on_progress(phase)
 
-    report("segment 1/4: loading + cleaning point cloud")
+    report("segment 1/5: loading + cleaning point cloud")
     pcd = load_point_cloud(ply_path)
     if not pcd.has_colors():
         raise ValueError("point cloud has no colour — cannot separate trees from roofs")
     scale = _bbox_diagonal(pcd)
 
-    report("segment 2/4: removing the ground plane")
+    report("segment 2/5: removing the ground plane")
     plane, above = segment_floor(pcd, distance_threshold=0.005 * scale)
+    up = plane[:3]
 
-    report("segment 3/4: clustering objects")
-    labels = np.asarray(above.cluster_dbscan(eps=0.02 * scale, min_points=10))
-    pts = np.asarray(above.points)
+    # Per-point classification (not per-cluster): on a large scene a single
+    # cluster mixes trees and buildings, so classify every point first.
+    report("segment 3/5: estimating surface orientation")
+    above.estimate_normals(
+        search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.02 * scale, max_nn=30)
+    )
     cols = np.asarray(above.colors)
+    norms = np.asarray(above.normals)
+    exg = 2 * cols[:, 1] - cols[:, 0] - cols[:, 2]
+    verticality = np.abs(norms @ up)  # ~1 = horizontal surface (roof-like), ~0 = chaotic (tree)
+    # roof: not green AND a flat horizontal surface; everything else is tree.
+    is_roof = (exg <= GREEN_EXG) & (verticality >= FLAT_DOT)
+    point_label = np.where(is_roof, "roof", "tree")
 
+    # Cluster within each class to count objects and measure per-object volume.
+    report("segment 4/5: clustering objects")
     objects: list[SegObject] = []
-    point_label = np.full(len(pts), "other", dtype=object)
     cell = 0.01 * scale
-    report("segment 4/4: classifying + measuring")
-    for lab in range(labels.max() + 1):
-        idx = np.where(labels == lab)[0]
-        if len(idx) < MIN_CLUSTER_POINTS:
+    for klass in ("tree", "roof"):
+        mask = point_label == klass
+        if mask.sum() < MIN_CLUSTER_POINTS:
             continue
-        cpts, ccols = pts[idx], cols[idx]
-        mean_exg = float(np.mean(2 * ccols[:, 1] - ccols[:, 0] - ccols[:, 2]))
-        klass = _classify(mean_exg, _surface_variation(cpts))
-        point_label[idx] = klass
-        centroid = cpts.mean(axis=0)
-        objects.append(
-            SegObject(
-                label=klass,
-                volume_m3=_cluster_volume(cpts, plane, cell),
-                num_points=len(idx),
-                north_m=float(centroid[0]),
-                east_m=float(centroid[1]),
+        sub = above.select_by_index(np.where(mask)[0])
+        sub_pts = np.asarray(sub.points)
+        clusters = np.asarray(sub.cluster_dbscan(eps=0.015 * scale, min_points=8))
+        for lab in range(clusters.max() + 1):
+            idx = np.where(clusters == lab)[0]
+            if len(idx) < MIN_CLUSTER_POINTS:
+                continue
+            cpts = sub_pts[idx]
+            centroid = cpts.mean(axis=0)
+            objects.append(
+                SegObject(
+                    label=klass,
+                    volume_m3=_cluster_volume(cpts, plane, cell),
+                    num_points=len(idx),
+                    north_m=float(centroid[0]),
+                    east_m=float(centroid[1]),
+                )
             )
-        )
 
+    report("segment 5/5: writing coloured cloud")
     counts = {k: sum(o.label == k for o in objects) for k in ("tree", "roof")}
     cloud_path = _write_segmented_cloud(pcd, above, point_label, output_dir or ply_path.parent)
-    logger.info("Segmented scene: %s from %d clusters", counts, len(objects))
+    logger.info("Segmented scene: %s from %d objects", counts, len(objects))
     return SegmentationResult(
         counts=counts,
         objects=objects,
