@@ -3,15 +3,31 @@
 Prototype / reference repo for estimating stockpile volumes in GPS-denied
 indoor environments:
 
-- **Simulation** — orbit flight patterns and camera triggers, designed for
-  PX4/ArduPilot SITL via MAVSDK (currently mocked so it runs anywhere).
+- **Simulation** — orbit and grid/lawnmower flight patterns, one shot per
+  dataset image, designed for PX4/ArduPilot SITL via MAVSDK (mocked so it
+  runs anywhere). The pattern is chosen per dataset (aerial → grid, object
+  scan → orbit).
 - **Reconstruction** — OpenSfM pipeline over example image datasets
-  (ODMdata) producing a dense point cloud (`merged.ply`).
-- **Volume** — Open3D floor-plane removal + hull volume in m³.
+  (ODMdata) producing a dense point cloud (`merged.ply`), optionally
+  GPS-georeferenced.
+- **Volume** — Open3D floor-plane removal + 2.5D grid integration.
+- **Segmentation** — geometry + colour classification of the reconstruction
+  into trees and roofs, with counts and per-object volume (no ML models).
 - **API + UI** — FastAPI backend and a Vite + React + TypeScript web UI.
 
 No real drone hardware is involved; everything is simulation / offline
 processing on example datasets.
+
+### Example datasets
+
+Clone any into `data/odm/<name>/` (each is a separate repo the ODMdata
+catalog links to). The three used in development:
+
+| Dataset | Kind | Flight | Shows |
+|---------|------|--------|-------|
+| `banana` | close-up object scan (no GPS) | orbit | volume + 3D view |
+| `brighton_beach` | aerial, GPS | grid | trees (coastal, no buildings) |
+| `toledo` | aerial suburban, GPS | grid | trees **and roofs** |
 
 ## Repository layout
 
