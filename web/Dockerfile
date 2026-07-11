@@ -1,4 +1,6 @@
-FROM node:20-alpine AS deps
+# node:22-alpine, not 20: the node:20-alpine image (sha256:fb4cd12c…) ships a
+# silently broken npm (exits 1 with no output on this Docker Desktop install).
+FROM node:22-alpine AS deps
 
 WORKDIR /app
 
