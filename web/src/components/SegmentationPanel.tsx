@@ -39,6 +39,7 @@ export default function SegmentationPanel() {
   const [visible, setVisible] = useState<Record<string, boolean>>({});
   const [photos, setPhotos] = useState<string[]>([]);
   const [photoIdx, setPhotoIdx] = useState(0);
+  const [orthoBase, setOrthoBase] = useState<"photo" | "points">("photo");
 
   const running = job !== null && (job.status === "queued" || job.status === "running");
   const elapsed = useElapsedSeconds(startedAt, running);
@@ -155,11 +156,36 @@ export default function SegmentationPanel() {
               <p style={{ fontSize: 12, color: "#888", margin: "2px 0 6px" }}>
                 All {photos.length || "the"} photos merged into one image via the
                 3D model (no stitching needed — the reconstruction already
-                aligned them), rendered straight down.
+                aligned them), rendered straight down. The class overlays stack
+                on top; toggle them with the checkboxes above.
               </p>
+              {result.ortho_photo_url && (
+                <div style={{ fontSize: 13, marginBottom: 6 }}>
+                  <label style={{ marginRight: 14 }}>
+                    <input
+                      type="radio"
+                      checked={orthoBase === "photo"}
+                      onChange={() => setOrthoBase("photo")}
+                    />{" "}
+                    merged photo (real pixels)
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      checked={orthoBase === "points"}
+                      onChange={() => setOrthoBase("points")}
+                    />{" "}
+                    point render (3D colours)
+                  </label>
+                </div>
+              )}
               <div style={{ position: "relative", maxWidth: 900 }}>
                 <img
-                  src={fileUrl(result.ortho_url)}
+                  src={fileUrl(
+                    orthoBase === "photo" && result.ortho_photo_url
+                      ? result.ortho_photo_url
+                      : result.ortho_url
+                  )}
                   alt="top-down orthophoto"
                   style={{ width: "100%", display: "block", borderRadius: 3 }}
                 />
@@ -174,6 +200,7 @@ export default function SegmentationPanel() {
                         position: "absolute",
                         inset: 0,
                         width: "100%",
+                        height: "100%",
                         pointerEvents: "none",
                       }}
                     />

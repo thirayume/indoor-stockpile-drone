@@ -20,17 +20,29 @@ export default function VolumePanel({ dataset }: Props) {
   const [job, setJob] = useState<VolumeJob | null>(null);
   const [useExifGps, setUseExifGps] = useState(false);
   const [imageCount, setImageCount] = useState(0);
+  const [hasGps, setHasGps] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const running = job !== null && (job.status === "queued" || job.status === "running");
   const elapsed = useElapsedSeconds(job?.started_at ?? null, running);
 
-  // Image count drives the rough time estimate.
+  // Image count drives the rough time estimate; has_gps gates the GPS toggle.
   useEffect(() => {
-    if (!dataset) return;
+    if (!dataset) {
+      setHasGps(null);
+      return;
+    }
     fetchDatasetInfo(dataset)
-      .then((info) => setImageCount(info.image_count))
-      .catch(() => setImageCount(0));
+      .then((info) => {
+        setImageCount(info.image_count);
+        setHasGps(info.has_gps);
+        // A dataset without GPS cannot use it — drop a stale tick.
+        if (!info.has_gps) setUseExifGps(false);
+      })
+      .catch(() => {
+        setImageCount(0);
+        setHasGps(null);
+      });
   }, [dataset]);
 
   // Poll the active job; each state update schedules the next poll, and no
@@ -61,16 +73,32 @@ export default function VolumePanel({ dataset }: Props) {
   return (
     <section>
       <h2>3. Reconstruction &amp; volume</h2>
-      <label style={{ display: "block", fontSize: 13, marginBottom: 8 }}>
+      <label
+        style={{
+          display: "block",
+          fontSize: 13,
+          marginBottom: 8,
+          opacity: hasGps === false ? 0.5 : 1,
+        }}
+      >
         <input
           type="checkbox"
           checked={useExifGps}
           onChange={(e) => setUseExifGps(e.target.checked)}
-          disabled={running}
+          disabled={running || hasGps === false}
         />{" "}
-        Use GPS from EXIF — georeferenced, true-metre scale (only helps if the
-        dataset's photos carry GPS, e.g. <code>brighton_beach</code>; a no-op
-        for <code>banana</code>).
+        Use GPS from EXIF — georeferenced, true-metre scale.{" "}
+        {hasGps === false ? (
+          <span>
+            This dataset's photos carry no GPS — reconstruction runs fully
+            GPS-denied (results in model units).
+          </span>
+        ) : (
+          <span>
+            Off (default): GPS in the photos is ignored and the reconstruction
+            is GPS-denied — the choice is always yours, never automatic.
+          </span>
+        )}
       </label>
       <button onClick={() => dataset && start(dataset)} disabled={!dataset || running}>
         Run reconstruction &amp; volume

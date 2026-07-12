@@ -139,7 +139,8 @@ export interface SegResult {
   objects: SegObject[];
   classes: SegClass[];
   cloud_url: string;
-  ortho_url: string | null;
+  ortho_url: string | null; // top-down point render
+  ortho_photo_url: string | null; // true photo mosaic (all photos merged)
   up_vector: number[] | null;
 }
 

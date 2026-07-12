@@ -10,6 +10,7 @@ The `opensfm` binary is expected on PATH — it is not bundled in the backend
 image (heavy C++ source build); see README for options.
 """
 
+import shutil
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -65,6 +66,17 @@ def run_opensfm_pipeline(
     for i, step in enumerate(pipeline, start=1):
         if on_step is not None:
             on_step(step, i, len(pipeline))
+        # Every run re-solves `reconstruct`, and even a same-config re-solve
+        # lands in a slightly different coordinate frame — so any cached
+        # undistorted/depthmap data is stale the moment reconstruct finishes.
+        # OpenSfM would silently merge those old-frame depthmaps into the new
+        # reconstruction; purge them so the dense cloud always matches
+        # reconstruction.json. (Features/matches stay cached: frame-free.)
+        if step == "undistort":
+            undistorted = project_dir / "undistorted"
+            if undistorted.is_dir():
+                shutil.rmtree(undistorted)
+                logger.info("Purged stale %s before undistort", undistorted)
         run_step(step, project_dir, opensfm_bin=opensfm_bin)
 
     return find_point_cloud(project_dir)

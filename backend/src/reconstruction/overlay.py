@@ -16,6 +16,7 @@ Kept free of Open3D on purpose: these run in the API process (no crash risk).
 """
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -44,6 +45,23 @@ def _plane_frame(plane: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]
     return u, v, n
 
 
+def _ortho_bounds(x: np.ndarray, y: np.ndarray) -> tuple[float, float, float, float]:
+    """Padded percentile bounds of the scene in ground-plane coordinates.
+
+    Shared by the point render and the photo mosaic so their pixels align
+    (the UI stacks the class overlays over either base image).
+    """
+    x0, x1 = np.percentile(x, [1, 99])
+    y0, y1 = np.percentile(y, [1, 99])
+    pad_x, pad_y = 0.02 * (x1 - x0), 0.02 * (y1 - y0)
+    return float(x0 - pad_x), float(x1 + pad_x), float(y0 - pad_y), float(y1 + pad_y)
+
+
+def _ortho_size(width: int, x0: float, x1: float, y0: float, y1: float) -> int:
+    """Image height for a given width preserving the ground aspect ratio."""
+    return int(np.clip(round(width * (y1 - y0) / max(x1 - x0, 1e-9)), 64, 3000))
+
+
 def render_ortho(labels_path: Path, out_dir: Path, class_colors: dict) -> dict[str, str]:
     """Write ortho_base.png + ortho_<class>.png; return {name: filename}.
 
@@ -60,14 +78,9 @@ def render_ortho(labels_path: Path, out_dir: Path, class_colors: dict) -> dict[s
     y = pts @ v_ax
     h = pts @ n_ax + plane[3]
 
-    # Percentile bounds keep stray far-away points from blowing up the frame.
-    x0, x1 = np.percentile(x, [1, 99])
-    y0, y1 = np.percentile(y, [1, 99])
-    pad_x, pad_y = 0.02 * (x1 - x0), 0.02 * (y1 - y0)
-    x0, x1, y0, y1 = x0 - pad_x, x1 + pad_x, y0 - pad_y, y1 + pad_y
-
+    x0, x1, y0, y1 = _ortho_bounds(x, y)
     width = ORTHO_WIDTH
-    height = int(np.clip(round(width * (y1 - y0) / max(x1 - x0, 1e-9)), 64, 2400))
+    height = _ortho_size(width, x0, x1, y0, y1)
     px = ((x - x0) / (x1 - x0) * (width - 2)).astype(np.int32)
     py = ((y - y0) / (y1 - y0) * (height - 2)).astype(np.int32)
     keep = (px >= 0) & (px < width - 1) & (py >= 0) & (py < height - 1)
@@ -100,6 +113,194 @@ def render_ortho(labels_path: Path, out_dir: Path, class_colors: dict) -> dict[s
         Image.fromarray(rgba).save(out_dir / name)
         files[klass] = name
     return files
+
+
+# ---------------------------------------------------------------------------
+# True photo mosaic: every ground pixel sampled from the best photo
+# ---------------------------------------------------------------------------
+
+MOSAIC_WIDTH = 1600
+_MOSAIC_PHOTO_WIDTH = 2200  # decode photos at roughly this width (JPEG draft)
+
+
+def _fill_holes(grid: np.ndarray, passes: int = 16) -> np.ndarray:
+    """Fill NaN cells with the mean of their valid 3x3 neighbours, repeatedly."""
+    for _ in range(passes):
+        nan = np.isnan(grid)
+        if not nan.any():
+            break
+        padded = np.pad(grid, 1, constant_values=np.nan)
+        shifts = [
+            padded[1 + dy : padded.shape[0] - 1 + dy, 1 + dx : padded.shape[1] - 1 + dx]
+            for dy in (-1, 0, 1)
+            for dx in (-1, 0, 1)
+            if (dy, dx) != (0, 0)
+        ]
+        stack = np.stack(shifts)
+        valid = ~np.isnan(stack)
+        counts = valid.sum(axis=0)
+        sums = np.where(valid, stack, 0.0).sum(axis=0)
+        mean = np.where(counts > 0, sums / np.maximum(counts, 1), np.nan)
+        grid = np.where(nan, mean, grid)
+    return np.nan_to_num(grid, nan=0.0)
+
+
+def _ensure_same_frame(pts: np.ndarray, shots: dict) -> np.ndarray:
+    """Camera centres for all shots, after checking they share the cloud's frame.
+
+    Two observed failure modes when stale artefacts from different OpenSfM
+    runs mix: the cloud sits millions of units from the cameras (different
+    origins), or the cameras bunch into a few units while the cloud spans
+    hundreds (different scales). Either way projecting is meaningless.
+    """
+    centers = np.array(
+        [
+            -_rotation_matrix(np.asarray(s["rotation"], dtype=float)).T
+            @ np.asarray(s["translation"], dtype=float)
+            for s in shots.values()
+        ]
+    )
+    cloud_center = np.median(pts, axis=0)
+    cloud_extent = float(np.linalg.norm(pts.max(axis=0) - pts.min(axis=0)))
+    cam_center = np.median(centers, axis=0)
+    cam_extent = float(np.linalg.norm(centers.max(axis=0) - centers.min(axis=0)))
+    offset = float(np.linalg.norm(cloud_center - cam_center))
+    if offset > 20 * max(cloud_extent, 1e-6) or (
+        len(shots) > 3 and cam_extent < cloud_extent / 50
+    ):
+        raise ValueError(
+            "point cloud and camera poses are in different coordinate frames — "
+            "stale outputs from a previous run; re-run the reconstruction"
+        )
+    return centers
+
+
+def render_photo_mosaic(
+    labels_path: Path,
+    project_dir: Path,
+    out_dir: Path,
+    on_progress: Callable[[str], None] | None = None,
+) -> str:
+    """Write ortho_photo.png — the photos merged into one seamless top-down
+    image — and return its filename.
+
+    A simplified orthomosaic: build a height map of the scene from the point
+    cloud, then colour every ground pixel by projecting its 3D position into
+    the photo whose camera stood closest above it (nearest-nadir sampling; no
+    seam blending). Bounds match render_ortho, so the class overlays stack on
+    this image unchanged.
+    """
+    data = _load_labels(labels_path)
+    pts = data["points"].astype(np.float64)
+    plane = data["plane"]
+    u_ax, v_ax, n_ax = _plane_frame(plane)
+    d = float(plane[3])
+
+    x = pts @ u_ax
+    y = pts @ v_ax
+    h = pts @ n_ax + d
+    x0, x1, y0, y1 = _ortho_bounds(x, y)
+    width = MOSAIC_WIDTH
+    height = _ortho_size(width, x0, x1, y0, y1)
+
+    # Height map (DSM): topmost point height per pixel, splatted 2x2, then
+    # hole-filled — needed so roofs/piles sample from the right photo pixel.
+    px = ((x - x0) / (x1 - x0) * (width - 2)).astype(np.int32)
+    py = ((y - y0) / (y1 - y0) * (height - 2)).astype(np.int32)
+    keep = (px >= 0) & (px < width - 1) & (py >= 0) & (py < height - 1)
+    order = np.argsort(h[keep])
+    px_o, py_o, h_o = px[keep][order], py[keep][order], h[keep][order]
+    dsm = np.full((height, width), np.nan)
+    for dy in (0, 1):
+        for dx in (0, 1):
+            dsm[py_o + dy, px_o + dx] = h_o
+    dsm = _fill_holes(dsm)
+
+    # World position of every output pixel (pixel centre -> plane frame).
+    gx = x0 + (np.arange(width) + 0.5) / (width - 2) * (x1 - x0)
+    gy = y0 + (np.arange(height) + 0.5) / (height - 2) * (y1 - y0)
+    grid_x, grid_y = np.meshgrid(gx, gy)
+    world = (
+        grid_x[..., None] * u_ax
+        + grid_y[..., None] * v_ax
+        + (dsm - d)[..., None] * n_ax
+    ).reshape(-1, 3)
+
+    recon = _load_reconstruction(project_dir)
+    shots, cameras = recon["shots"], recon["cameras"]
+    names = sorted(shots)
+    centers = _ensure_same_frame(pts, {s: shots[s] for s in names})
+    cam_xy = np.stack([centers @ u_ax, centers @ v_ax], axis=1)
+
+    # Nearest camera (in ground XY) per pixel, chunked to bound memory.
+    pix_xy = np.stack([grid_x.reshape(-1), grid_y.reshape(-1)], axis=1)
+    assign = np.empty(len(pix_xy), dtype=np.int32)
+    chunk = 200_000
+    for start in range(0, len(pix_xy), chunk):
+        block = pix_xy[start : start + chunk]
+        d2 = ((block[:, None, :] - cam_xy[None, :, :]) ** 2).sum(axis=2)
+        assign[start : start + chunk] = np.argmin(d2, axis=1)
+
+    # Start from the point render so pixels no photo covers are not black.
+    base_png = out_dir / "ortho_base.png"
+    if base_png.is_file():
+        out = np.asarray(
+            Image.open(base_png).convert("RGB").resize((width, height), Image.NEAREST)
+        ).copy()
+    else:
+        out = np.zeros((height, width, 3), dtype=np.uint8)
+    out = out.reshape(-1, 3)
+    filled = np.zeros(len(out), dtype=bool)
+
+    def sample(shot_name: str, targets: np.ndarray) -> None:
+        """Sample colours for these pixel indices from one photo."""
+        shot = shots[shot_name]
+        camera = cameras[shot["camera"]]
+        pix, in_front = _project(world[targets], shot, camera)
+        with np.errstate(invalid="ignore"):
+            pix = np.nan_to_num(pix, nan=-1e9, posinf=1e9, neginf=-1e9)
+        w_full, h_full = camera["width"], camera["height"]
+        ok = (
+            in_front
+            & (pix[:, 0] >= 0)
+            & (pix[:, 0] < w_full - 1)
+            & (pix[:, 1] >= 0)
+            & (pix[:, 1] < h_full - 1)
+        )
+        if not ok.any():
+            return
+        photo_path = project_dir / "images" / shot_name
+        photo = Image.open(photo_path)
+        # JPEG draft mode decodes at reduced resolution — much faster.
+        photo.draft("RGB", (_MOSAIC_PHOTO_WIDTH, _MOSAIC_PHOTO_WIDTH))
+        arr = np.asarray(photo.convert("RGB"))
+        scale_x = arr.shape[1] / w_full
+        scale_y = arr.shape[0] / h_full
+        ui = np.clip((pix[ok, 0] * scale_x).astype(np.int32), 0, arr.shape[1] - 1)
+        vi = np.clip((pix[ok, 1] * scale_y).astype(np.int32), 0, arr.shape[0] - 1)
+        hit = targets[ok]
+        out[hit] = arr[vi, ui]
+        filled[hit] = True
+
+    for i, name in enumerate(names):
+        targets = np.where((assign == i) & ~filled)[0]
+        if len(targets) == 0:
+            continue
+        sample(name, targets)
+        if on_progress is not None and (i + 1) % 10 == 0:
+            on_progress(f"photo mosaic: {i + 1}/{len(names)} photos")
+
+    # Pixels whose nearest photo did not cover them: sweep the photos again.
+    for name in names:
+        remaining = np.where(~filled)[0]
+        if len(remaining) == 0:
+            break
+        sample(name, remaining)
+
+    result = out.reshape(height, width, 3)
+    filename = "ortho_photo.png"
+    Image.fromarray(result).save(out_dir / filename)
+    return filename
 
 
 # ---------------------------------------------------------------------------
@@ -199,19 +400,7 @@ def render_photo_overlay(
 
     data = _load_labels(labels_path)
     pts, labels = data["points"].astype(np.float64), data["labels"]
-
-    # Guard against mixed-frame artefacts (e.g. a merged.ply cached from a
-    # GPS-aligned run next to a GPS-denied reconstruction.json): if the cloud
-    # sits nowhere near this camera, projecting it is meaningless.
-    rot = _rotation_matrix(np.asarray(shot["rotation"], dtype=float))
-    cam_center = -rot.T @ np.asarray(shot["translation"], dtype=float)
-    cloud_center = np.median(pts, axis=0)
-    cloud_extent = float(np.linalg.norm(pts.max(axis=0) - pts.min(axis=0)))
-    if np.linalg.norm(cloud_center - cam_center) > 50 * max(cloud_extent, 1e-6):
-        raise ValueError(
-            "point cloud and camera poses are in different coordinate frames — "
-            "stale outputs from a previous run; re-run the reconstruction"
-        )
+    _ensure_same_frame(pts, recon["shots"])
 
     pix, in_front = _project(pts, shot, camera)
     with np.errstate(invalid="ignore"):

@@ -7,14 +7,18 @@ from pydantic import BaseModel
 
 from core.config import settings
 from core.jobs import Job, job_manager
+from core.logging import get_logger
 from reconstruction.opensfm_runner import find_point_cloud
 from reconstruction.overlay import (
     list_shot_images,
     render_ortho,
+    render_photo_mosaic,
     render_photo_overlay_cached,
 )
 from reconstruction.pipeline import run_segmentation_isolated
 from reconstruction.segmentation import CLASS_COLORS, CLASSES, OBJECT_CLASSES
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/segment", tags=["segmentation"])
 
@@ -46,7 +50,8 @@ class SegResultModel(BaseModel):
     objects: list[SegObjectModel]
     classes: list[SegClassModel]
     cloud_url: str  # combined class-coloured cloud
-    ortho_url: str | None  # top-down base image (all photos merged via the 3D model)
+    ortho_url: str | None  # top-down point render
+    ortho_photo_url: str | None  # true photo mosaic (all photos merged into one)
     up_vector: list[float] | None
 
 
@@ -93,6 +98,22 @@ def start_segmentation() -> SegJobResponse:
         labels_path = Path(data["labels_path"])
         ortho_files = render_ortho(labels_path, labels_path.parent, CLASS_COLORS)
 
+        # Merge every photo into one seamless top-down image. Best-effort:
+        # the mosaic needs photo files + poses, and its absence should not
+        # fail the whole segmentation.
+        job.progress = "merging photos into one mosaic"
+        ortho_photo_url = None
+        try:
+            mosaic = render_photo_mosaic(
+                labels_path,
+                settings.opensfm_project_dir,
+                labels_path.parent,
+                on_progress=progress,
+            )
+            ortho_photo_url = f"/segment/ortho/{mosaic}"
+        except Exception:
+            logger.exception("photo mosaic failed; continuing without it")
+
         objects = data["objects"]
         point_counts: dict[str, int] = data.get("point_counts", {})
         classes = []
@@ -126,6 +147,7 @@ def start_segmentation() -> SegJobResponse:
             "classes": classes,
             "cloud_url": "/volume/files/segmented.ply",
             "ortho_url": f"/segment/ortho/{ortho_files['base']}",
+            "ortho_photo_url": ortho_photo_url,
             "up_vector": data["up_vector"],
         }
 
@@ -144,7 +166,7 @@ def get_segmentation_job(job_id: str) -> SegJobResponse:
 @router.get("/ortho/{filename}")
 def download_ortho(filename: str) -> FileResponse:
     """Top-down render (base or one class overlay) written by the last job."""
-    allowed = {"ortho_base.png"} | {f"ortho_{k}.png" for k in CLASSES}
+    allowed = {"ortho_base.png", "ortho_photo.png"} | {f"ortho_{k}.png" for k in CLASSES}
     if filename not in allowed:
         raise HTTPException(status_code=404, detail=f"unknown file: {filename}")
     path = _output_dir() / filename
