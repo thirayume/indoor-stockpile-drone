@@ -154,16 +154,20 @@ def start_job(request: JobRequest | None = None) -> JobResponse:
 
 @router.get("/jobs", response_model=list[JobResponse])
 def list_jobs() -> list[JobResponse]:
-    """All jobs of this API process, newest first."""
-    return [_job_response(job) for job in job_manager.list()]
+    """All reconstruction jobs of this API process, newest first.
+
+    Segmentation jobs live under /segment/jobs — their results do not fit
+    VolumeRunResponse, so they must not be serialised here.
+    """
+    return [_job_response(job) for job in job_manager.list() if job.kind == "reconstruction"]
 
 
 @router.get("/jobs/{job_id}", response_model=JobResponse)
 def get_job(job_id: str) -> JobResponse:
     """State of a single job (status, progress, result or error)."""
     job = job_manager.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail=f"unknown job: {job_id}")
+    if job is None or job.kind != "reconstruction":
+        raise HTTPException(status_code=404, detail=f"unknown reconstruction job: {job_id}")
     return _job_response(job)
 
 
