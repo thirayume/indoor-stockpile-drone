@@ -198,14 +198,20 @@ def _data_relative(path: Path) -> str:
 
 def _downloadable_files() -> dict[str, list[Path]]:
     """Whitelist of downloadable artefacts and where the pipeline puts them."""
+    from reconstruction.segmentation import CLASSES
+
     project = settings.opensfm_project_dir
     depthmaps = project / "undistorted" / "depthmaps"
-    return {
+    files = {
         "merged.ply": [depthmaps / "merged.ply"],
         "reconstruction.ply": [project / "reconstruction.ply"],
         "stockpile_mesh.ply": [depthmaps / "stockpile_mesh.ply", project / "stockpile_mesh.ply"],
         "segmented.ply": [depthmaps / "segmented.ply", project / "segmented.ply"],
     }
+    for klass in CLASSES:  # per-class clouds for the 3D layer toggles
+        name = f"seg_{klass}.ply"
+        files[name] = [depthmaps / name, project / name]
+    return files
 
 
 @router.get("/files/preview.ply")

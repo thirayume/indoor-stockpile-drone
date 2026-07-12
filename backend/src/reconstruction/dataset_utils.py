@@ -114,9 +114,23 @@ def prepare_opensfm_project(
 
     project = project_dir or settings.opensfm_project_dir
     project.mkdir(parents=True, exist_ok=True)
-    # Rewrite config each run so the GPS toggle always takes effect.
+
+    # OpenSfM caches per-image outputs (features, matches, depthmaps) and
+    # silently reuses them. After switching dataset or GPS mode those caches
+    # are stale — e.g. depthmaps from a GPS-aligned run get merged into a
+    # reconstruction computed in a completely different (GPS-denied) frame,
+    # producing a merged.ply that no longer matches reconstruction.json.
+    # Wipe every derived output whenever the config or the image set changes;
+    # identical re-runs keep the cache and stay fast.
     config = project / "config.yaml"
-    config.write_text(opensfm_config(use_exif_gps))
+    config_text = opensfm_config(use_exif_gps)
+    old_config = config.read_text() if config.is_file() else None
+    if old_config != config_text or _staged_image_names(project) != set(
+        dataset_image_names(dataset_id, root)
+    ):
+        _clean_derived_outputs(project)
+
+    config.write_text(config_text)
     logger.info("Wrote config.yaml (use_exif_gps=%s) to %s", use_exif_gps, config)
 
     # OpenSfM treats the mere existence of gcp_list.txt as "GCPs provided"
@@ -181,6 +195,48 @@ def _remove_existing(dst: Path) -> None:
         dst.unlink()
     elif dst.is_dir():
         shutil.rmtree(dst)
+
+
+def _staged_image_names(project: Path) -> set[str]:
+    """Names of the images currently staged at <project>/images/."""
+    images = project / "images"
+    if not images.is_dir():
+        return set()
+    return {
+        p.name
+        for p in images.iterdir()
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+    }
+
+
+# Everything OpenSfM (or our pipeline) derives from images/ + config.yaml.
+_DERIVED_DIRS = ("exif", "features", "matches", "reports", "undistorted")
+_DERIVED_FILES = (
+    "camera_models.json",
+    "profile.log",
+    "reconstruction.json",
+    "reconstruction.meshed.json",
+    "reconstruction.ply",
+    "reference_lla.json",
+    "tracks.csv",
+)
+
+
+def _clean_derived_outputs(project: Path) -> None:
+    """Remove cached OpenSfM outputs so the next run starts from the images."""
+    removed = []
+    for name in _DERIVED_DIRS:
+        path = project / name
+        if path.is_dir():
+            shutil.rmtree(path)
+            removed.append(name)
+    for name in _DERIVED_FILES:
+        path = project / name
+        if path.is_file():
+            path.unlink()
+            removed.append(name)
+    if removed:
+        logger.info("Config/dataset changed - cleared stale outputs: %s", ", ".join(removed))
 
 
 if __name__ == "__main__":

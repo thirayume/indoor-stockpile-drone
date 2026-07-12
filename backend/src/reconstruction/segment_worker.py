@@ -28,6 +28,7 @@ def main() -> int:
         json.dumps(
             {
                 "counts": result.counts,
+                "point_counts": result.point_counts,
                 "objects": [
                     {
                         "label": o.label,
@@ -39,6 +40,8 @@ def main() -> int:
                     for o in result.objects
                 ],
                 "cloud_path": str(result.cloud_path),
+                "labels_path": str(result.labels_path),
+                "class_clouds": {k: str(p) for k, p in result.class_cloud_paths.items()},
                 "up_vector": list(result.up_vector),
             }
         )

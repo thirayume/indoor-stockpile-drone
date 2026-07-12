@@ -4,15 +4,25 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader.js";
 import { fileUrl } from "../api";
 
+export interface CloudLayer {
+  key: string;
+  /** Backend-relative URL of this layer's point cloud. */
+  url: string;
+  /** Parent-controlled visibility (e.g. the class legend checkboxes). */
+  visible: boolean;
+}
+
 interface Props {
   /** Backend-relative URL of the (downsampled) point cloud, e.g. /volume/files/preview.ply */
-  cloudUrl: string;
+  cloudUrl?: string | null;
   /** Backend-relative URL of the stockpile mesh, if one was produced. */
   meshUrl: string | null;
   /** Oriented floor normal (floor -> pile); rotated to +Y so the scene stands upright. */
   upVector: number[] | null;
   /** Label for the point-cloud layer toggle. */
   cloudLabel?: React.ReactNode;
+  /** Multiple independently-toggleable clouds (replaces cloudUrl when given). */
+  layers?: CloudLayer[];
 }
 
 const VIEW_HEIGHT = 440;
@@ -66,14 +76,25 @@ function robustFrame(geometry: THREE.BufferGeometry): { center: THREE.Vector3; e
 }
 
 /** One interactive 3D view showing BOTH result files overlaid:
- *  coloured points = merged.ply (preview), orange mesh = stockpile_mesh.ply. */
-export default function ReconstructionViewer({ cloudUrl, meshUrl, upVector, cloudLabel }: Props) {
+ *  coloured points = merged.ply (preview), orange mesh = stockpile_mesh.ply.
+ *  In `layers` mode it instead loads several clouds the parent toggles. */
+export default function ReconstructionViewer({
+  cloudUrl,
+  meshUrl,
+  upVector,
+  cloudLabel,
+  layers,
+}: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const pointsRef = useRef<THREE.Object3D | null>(null);
   const meshRef = useRef<THREE.Object3D | null>(null);
+  const layerRefs = useRef<Map<string, THREE.Object3D>>(new Map());
   const [status, setStatus] = useState("downloading point cloud…");
   const [showPoints, setShowPoints] = useState(true);
   const [showMesh, setShowMesh] = useState(true);
+
+  // Reload only when the set of layer URLs changes — NOT on visibility toggles.
+  const layersKey = layers ? layers.map((l) => `${l.key}=${l.url}`).join("|") : null;
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -98,48 +119,92 @@ export default function ReconstructionViewer({ cloudUrl, meshUrl, upVector, clou
     let disposed = false;
     const loader = new PLYLoader();
     const upright = uprightMatrix(upVector);
+    let framed = false;
 
-    loader.load(
-      fileUrl(cloudUrl),
-      (geometry) => {
-        if (disposed) return;
-        downcastFloat64Attributes(geometry);
-        geometry.applyMatrix4(upright);
-        const { center, extent } = robustFrame(geometry);
-        const hasColor = geometry.hasAttribute("color");
-        const points = new THREE.Points(
-          geometry,
-          new THREE.PointsMaterial({
-            // Fixed pixel size: always visible regardless of scene scale.
-            size: 2.5,
-            sizeAttenuation: false,
-            vertexColors: hasColor,
-            color: hasColor ? 0xffffff : 0x7faaff,
-          })
+    const frameScene = (geometry: THREE.BufferGeometry) => {
+      const { center, extent } = robustFrame(geometry);
+      const axes = new THREE.AxesHelper(extent * 0.3);
+      axes.position.copy(center);
+      scene.add(axes);
+      camera.position
+        .copy(center)
+        .add(new THREE.Vector3(extent * 0.6, extent * 0.45, extent * 0.6));
+      controls.target.copy(center);
+    };
+
+    const makePoints = (geometry: THREE.BufferGeometry) => {
+      downcastFloat64Attributes(geometry);
+      geometry.applyMatrix4(upright);
+      const hasColor = geometry.hasAttribute("color");
+      return new THREE.Points(
+        geometry,
+        new THREE.PointsMaterial({
+          // Fixed pixel size: always visible regardless of scene scale.
+          size: 2.5,
+          sizeAttenuation: false,
+          vertexColors: hasColor,
+          color: hasColor ? 0xffffff : 0x7faaff,
+        })
+      );
+    };
+
+    if (layers && layers.length > 0) {
+      layerRefs.current = new Map();
+      const total = layers.length;
+      let done = 0;
+      let loadedPoints = 0;
+      for (const layer of layers) {
+        loader.load(
+          fileUrl(layer.url),
+          (geometry) => {
+            if (disposed) return;
+            const points = makePoints(geometry);
+            points.visible = layer.visible;
+            layerRefs.current.set(layer.key, points);
+            scene.add(points);
+            if (!framed) {
+              framed = true;
+              frameScene(geometry);
+            }
+            done += 1;
+            loadedPoints += geometry.getAttribute("position").count;
+            setStatus(
+              done < total
+                ? `loading layers… ${done}/${total}`
+                : `${loadedPoints.toLocaleString()} points in ${total} layers`
+            );
+          },
+          undefined,
+          () => {
+            done += 1;
+            setStatus(`failed to load layer ${layer.key}`);
+          }
         );
-        pointsRef.current = points;
-        scene.add(points);
-
-        const axes = new THREE.AxesHelper(extent * 0.3);
-        axes.position.copy(center);
-        scene.add(axes);
-
-        camera.position
-          .copy(center)
-          .add(new THREE.Vector3(extent * 0.6, extent * 0.45, extent * 0.6));
-        controls.target.copy(center);
-        setStatus(`${geometry.getAttribute("position").count.toLocaleString()} points loaded`);
-      },
-      (event) => {
-        if (event.total > 0) {
-          setStatus(`downloading point cloud… ${(event.loaded / 1e6).toFixed(1)} MB`);
-        }
-      },
-      () => setStatus("failed to load the point cloud preview")
-    );
+      }
+    } else if (cloudUrl) {
+      loader.load(
+        fileUrl(cloudUrl),
+        (geometry) => {
+          if (disposed) return;
+          const points = makePoints(geometry);
+          pointsRef.current = points;
+          scene.add(points);
+          framed = true;
+          frameScene(geometry);
+          setStatus(`${geometry.getAttribute("position").count.toLocaleString()} points loaded`);
+        },
+        (event) => {
+          if (event.total > 0) {
+            setStatus(`downloading point cloud… ${(event.loaded / 1e6).toFixed(1)} MB`);
+          }
+        },
+        () => setStatus("failed to load the point cloud preview")
+      );
+    }
 
     if (meshUrl) {
-      loader.load(fileUrl(meshUrl), (geometry) => {
+      const meshLoader = new PLYLoader();
+      meshLoader.load(fileUrl(meshUrl), (geometry) => {
         if (disposed) return;
         downcastFloat64Attributes(geometry);
         geometry.applyMatrix4(upright);
@@ -174,7 +239,8 @@ export default function ReconstructionViewer({ cloudUrl, meshUrl, upVector, clou
       renderer.dispose();
       mount.removeChild(renderer.domElement);
     };
-  }, [cloudUrl, meshUrl, upVector]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- layersKey stands in for layers
+  }, [cloudUrl, meshUrl, upVector, layersKey]);
 
   useEffect(() => {
     if (pointsRef.current) pointsRef.current.visible = showPoints;
@@ -182,21 +248,30 @@ export default function ReconstructionViewer({ cloudUrl, meshUrl, upVector, clou
   useEffect(() => {
     if (meshRef.current) meshRef.current.visible = showMesh;
   }, [showMesh]);
+  useEffect(() => {
+    for (const layer of layers ?? []) {
+      const obj = layerRefs.current.get(layer.key);
+      if (obj) obj.visible = layer.visible;
+    }
+  }, [layers]);
 
+  const layersMode = (layers?.length ?? 0) > 0;
   return (
     <div style={{ margin: "12px 0" }}>
-      <label style={{ fontSize: 13, marginRight: 16 }}>
-        <input
-          type="checkbox"
-          checked={showPoints}
-          onChange={(e) => setShowPoints(e.target.checked)}
-        />{" "}
-        {cloudLabel ?? (
-          <>
-            point cloud (<code>merged.ply</code>, coloured dots — the reconstructed scene)
-          </>
-        )}
-      </label>
+      {!layersMode && (
+        <label style={{ fontSize: 13, marginRight: 16 }}>
+          <input
+            type="checkbox"
+            checked={showPoints}
+            onChange={(e) => setShowPoints(e.target.checked)}
+          />{" "}
+          {cloudLabel ?? (
+            <>
+              point cloud (<code>merged.ply</code>, coloured dots — the reconstructed scene)
+            </>
+          )}
+        </label>
+      )}
       {meshUrl && (
         <label style={{ fontSize: 13 }}>
           <input

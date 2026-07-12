@@ -1,16 +1,29 @@
-"""Segment a reconstructed scene into trees / roofs by geometry + colour.
+"""Segment a reconstructed scene into semantic classes by geometry + colour.
 
-Self-contained (NumPy + Open3D, no ML models):
-1. Segment the ground plane (RANSAC) and keep points above it.
-2. Cluster the above-ground points (DBSCAN) into candidate objects.
-3. Classify each cluster from two cheap cues:
-   - greenness  ExG = 2G - R - B  (vegetation is green)   -> "tree"
-   - planarity  (PCA surface variation; roofs are flat)   -> "roof"
-4. Count each class and compute per-object volume (2.5D grid, model units³).
-5. Recolour the cloud by class and write it for the 3D viewer.
+Self-contained (NumPy + Open3D, no ML models). Classes:
+
+- ground  vegetated / bare ground in the floor plane
+- road    paved surface in the floor plane (grey: low colour saturation)
+- tree    green (ExG) points above the ground
+- roof    non-green cluster floating above the ground (walls are barely
+          captured in nadir aerial shots, so buildings start well above 0)
+- car     small, low, compact non-green cluster
+- pile    non-green mound rising continuously from the ground — stockpiles
+          of soil / sand / fertiliser / sacks all share this shape
+- other   anything that fits none of the rules
+
+Pipeline:
+1. RANSAC the floor plane; per-point height above it.
+2. Per-point cues: greenness ExG = 2G-R-B, colour saturation, normal
+   verticality |n·up|.
+3. Floor-band points -> ground / road by saturation; green points -> tree.
+4. Remaining above-ground points are DBSCAN-clustered and each cluster is
+   classified from its shape (height profile + footprint): car / roof / pile.
+5. Count objects, per-object 2.5D grid volume, recolour the cloud by class,
+   and save per-class clouds + a labels archive for the 2D/ortho overlays.
 
 Thresholds are heuristics (tunable) — good enough to demonstrate
-segment + count + volume, not a trained semantic model.
+segment + count + measure, not a trained semantic model.
 """
 
 from collections.abc import Callable
@@ -30,21 +43,50 @@ from reconstruction.volume_compute import (
 
 logger = get_logger(__name__)
 
-# Class colours for the recoloured cloud (RGB 0..1).
-_COLORS = {
+# Class order is the label id used in labels.npz (index = id).
+CLASSES = ("ground", "road", "tree", "roof", "car", "pile", "other")
+
+# Class colours for the recoloured clouds and 2D overlays (RGB 0..1).
+CLASS_COLORS: dict[str, tuple[float, float, float]] = {
     "ground": (0.60, 0.60, 0.60),
+    "road": (0.15, 0.65, 0.90),
     "tree": (0.20, 0.72, 0.25),
     "roof": (0.95, 0.50, 0.15),
-    "other": (0.40, 0.50, 0.90),
+    "car": (0.90, 0.20, 0.75),
+    "pile": (0.95, 0.85, 0.15),
+    "other": (0.55, 0.45, 0.70),
 }
-GREEN_EXG = 0.02  # per-point ExG above this -> vegetation (tree)
-FLAT_DOT = 0.80  # |normal · up| above this -> horizontal surface (roof-like)
+# Object classes get counted + measured; surface classes are overlay-only.
+OBJECT_CLASSES = ("tree", "roof", "car", "pile")
+
+GREEN_EXG = 0.02  # per-point ExG above this -> vegetation
+ROAD_SAT = 0.10  # saturation below this (and not green, not dark) -> paved
+ROAD_MIN_VALUE = 0.25  # darker than this is shadow, not pavement
 MIN_CLUSTER_POINTS = 30
+ROOF_TOP_HEAVY = 0.50  # median/p98 height above this -> elevated slab (roof)
+ROUGH_DOT = 0.55  # |normal · up| below this counts as a "rough" point
+TREE_ROUGH_FRACTION = 0.45  # cluster rougher than this -> canopy (autumn trees)
+
+# Geometric thresholds scale with the scene's bbox diagonal, but on large
+# GPS-scaled scenes (hundreds of metres) pure relative values explode — a 7 m
+# cluster eps merges whole street blocks and a 2 m ground band swallows every
+# car. The clamps are sane absolute metres; small GPS-denied scenes (arbitrary
+# model units, tiny diagonals) never reach them, so they keep pure relative
+# behaviour.
+def _params(scale: float) -> dict[str, float]:
+    return {
+        "ground_band": min(0.005 * scale, 0.6),  # within this of the floor -> ground/road
+        "cluster_eps": min(0.015 * scale, 2.0),
+        "tree_min_h": min(0.008 * scale, 1.0),  # green below this -> ground, not tree
+        "car_max_h": min(0.012 * scale, 2.3),
+        "car_max_fp": min(0.04 * scale, 8.0),  # footprint diagonal
+        "low_max_h": min(0.02 * scale, 2.6),  # low + sprawling (fences, walls) -> other
+    }
 
 
 @dataclass
 class SegObject:
-    label: str  # "tree" | "roof" | "other"
+    label: str  # one of OBJECT_CLASSES
     volume_m3: float
     num_points: int
     north_m: float
@@ -55,7 +97,10 @@ class SegObject:
 class SegmentationResult:
     counts: dict[str, int]
     objects: list[SegObject]
+    point_counts: dict[str, int]  # per-class point totals (incl. surface classes)
     cloud_path: Path
+    labels_path: Path
+    class_cloud_paths: dict[str, Path]
     up_vector: tuple[float, float, float]
     objects_total: int = field(init=False)
 
@@ -77,6 +122,31 @@ def _cluster_volume(points: np.ndarray, plane: np.ndarray, cell_size: float) -> 
     return float(cell_size**2 * np.sum(sums / counts))
 
 
+def _classify_cluster(
+    heights: np.ndarray, rough_frac: float, footprint_diag: float, p: dict[str, float]
+) -> str:
+    """Shape-based class of one non-green above-ground cluster.
+
+    Cars are low and compact. A very rough surface (chaotic normals) is tree
+    canopy that failed the greenness cue — autumn foliage. Low but sprawling
+    clusters (fences, garden walls, terrain bumps) are "other". A building is
+    top-heavy: nadir shots capture the roof slab densely and the walls barely,
+    so most points sit near the cluster's top. A pile is a mound: surface area
+    (and therefore points) concentrates near the bottom, rising gradually to
+    a peak — and its surface is smooth, unlike canopy.
+    """
+    h_top = float(np.percentile(heights, 98))  # robust to stray high points
+    if h_top < p["car_max_h"] and footprint_diag < p["car_max_fp"]:
+        return "car"
+    if rough_frac > TREE_ROUGH_FRACTION:
+        return "tree"
+    if h_top < p["low_max_h"]:
+        return "other"
+    if float(np.median(heights)) > ROOF_TOP_HEAVY * h_top:
+        return "roof"
+    return "pile"
+
+
 def segment_scene(
     ply_path: Path,
     output_dir: Path | None = None,
@@ -86,84 +156,154 @@ def segment_scene(
         if on_progress is not None:
             on_progress(phase)
 
-    report("segment 1/5: loading + cleaning point cloud")
+    report("segment 1/6: loading + cleaning point cloud")
     pcd = load_point_cloud(ply_path)
     if not pcd.has_colors():
-        raise ValueError("point cloud has no colour — cannot separate trees from roofs")
+        raise ValueError("point cloud has no colour — colour cues are required")
     scale = _bbox_diagonal(pcd)
+    out_dir = output_dir or ply_path.parent
 
-    report("segment 2/5: removing the ground plane")
-    plane, above = segment_floor(pcd, distance_threshold=0.005 * scale)
+    p = _params(scale)
+
+    report("segment 2/6: finding the ground plane")
+    # RANSAC fitting distance stays relative (robust plane on any scale);
+    # the classification band is the clamped one.
+    plane, _ = segment_floor(pcd, distance_threshold=0.005 * scale)
     up = plane[:3]
 
-    # Per-point classification (not per-cluster): on a large scene a single
-    # cluster mixes trees and buildings, so classify every point first.
-    report("segment 3/5: estimating surface orientation")
-    above.estimate_normals(
-        search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.02 * scale, max_nn=30)
-    )
-    cols = np.asarray(above.colors)
-    norms = np.asarray(above.normals)
+    report("segment 3/6: per-point colour cues")
+    pts = np.asarray(pcd.points)
+    cols = np.asarray(pcd.colors)
+    heights = pts @ up + plane[3]
     exg = 2 * cols[:, 1] - cols[:, 0] - cols[:, 2]
-    verticality = np.abs(norms @ up)  # ~1 = horizontal surface (roof-like), ~0 = chaotic (tree)
-    # roof: not green AND a flat horizontal surface; everything else is tree.
-    is_roof = (exg <= GREEN_EXG) & (verticality >= FLAT_DOT)
-    point_label = np.where(is_roof, "roof", "tree")
+    c_max = cols.max(axis=1)
+    saturation = (c_max - cols.min(axis=1)) / np.maximum(c_max, 1e-6)
 
-    # Cluster within each class to count objects and measure per-object volume.
-    report("segment 4/5: clustering objects")
+    labels = np.full(len(pts), CLASSES.index("other"), dtype=np.uint8)
+    in_floor = heights <= p["ground_band"]
+    is_green = exg > GREEN_EXG
+    labels[in_floor] = CLASSES.index("ground")
+    labels[in_floor & ~is_green & (saturation < ROAD_SAT) & (c_max > ROAD_MIN_VALUE)] = (
+        CLASSES.index("road")
+    )
+    labels[~in_floor & is_green] = CLASSES.index("tree")
+    # Low vegetation (lawns, shrubs below tree height) is ground, not trees.
+    labels[~in_floor & is_green & (heights < p["tree_min_h"])] = CLASSES.index("ground")
+
+    # Non-green points above the floor: cluster, then classify each cluster
+    # by shape. (Per-cluster is safe here because trees — the class that
+    # merges into everything — were already removed by the colour cue.)
+    report("segment 4/6: clustering candidate objects")
     objects: list[SegObject] = []
     cell = 0.01 * scale
-    for klass in ("tree", "roof"):
-        mask = point_label == klass
-        if mask.sum() < MIN_CLUSTER_POINTS:
-            continue
-        sub = above.select_by_index(np.where(mask)[0])
-        sub_pts = np.asarray(sub.points)
-        clusters = np.asarray(sub.cluster_dbscan(eps=0.015 * scale, min_points=8))
+    candidate_idx = np.where(~in_floor & ~is_green)[0]
+    if len(candidate_idx) >= MIN_CLUSTER_POINTS:
+        sub = pcd.select_by_index(candidate_idx)
+        # Surface roughness (per-point normal verticality) separates canopy
+        # from smooth built/piled surfaces; only needed for the candidates.
+        sub.estimate_normals(
+            search_param=o3d.geometry.KDTreeSearchParamHybrid(
+                radius=2.5 * p["cluster_eps"], max_nn=30
+            )
+        )
+        rough = np.abs(np.asarray(sub.normals) @ up) < ROUGH_DOT
+        clusters = np.asarray(sub.cluster_dbscan(eps=p["cluster_eps"], min_points=8))
+        u_ax, v_ax = _plane_basis(up)
         for lab in range(clusters.max() + 1):
-            idx = np.where(clusters == lab)[0]
-            if len(idx) < MIN_CLUSTER_POINTS:
+            in_cluster = clusters == lab
+            members = candidate_idx[in_cluster]
+            if len(members) < MIN_CLUSTER_POINTS:
                 continue
-            cpts = sub_pts[idx]
+            cpts = pts[members]
+            uv = np.stack([cpts @ u_ax, cpts @ v_ax], axis=1)
+            footprint_diag = float(np.linalg.norm(uv.max(axis=0) - uv.min(axis=0)))
+            klass = _classify_cluster(
+                heights[members], float(rough[in_cluster].mean()), footprint_diag, p
+            )
+            labels[members] = CLASSES.index(klass)
+            # Trees rescued here are counted in the tree pass below; "other"
+            # is never an object.
+            if klass not in OBJECT_CLASSES or klass == "tree":
+                continue
             centroid = cpts.mean(axis=0)
             objects.append(
                 SegObject(
                     label=klass,
                     volume_m3=_cluster_volume(cpts, plane, cell),
-                    num_points=len(idx),
+                    num_points=len(members),
                     north_m=float(centroid[0]),
                     east_m=float(centroid[1]),
                 )
             )
 
-    report("segment 5/5: writing coloured cloud")
-    counts = {k: sum(o.label == k for o in objects) for k in ("tree", "roof")}
-    cloud_path = _write_segmented_cloud(pcd, above, point_label, output_dir or ply_path.parent)
+    # Count green clusters as individual trees too.
+    report("segment 5/6: counting trees")
+    tree_idx = np.where(labels == CLASSES.index("tree"))[0]
+    if len(tree_idx) >= MIN_CLUSTER_POINTS:
+        sub = pcd.select_by_index(tree_idx)
+        clusters = np.asarray(sub.cluster_dbscan(eps=p["cluster_eps"], min_points=8))
+        for lab in range(clusters.max() + 1):
+            members = tree_idx[clusters == lab]
+            if len(members) < MIN_CLUSTER_POINTS:
+                continue
+            cpts = pts[members]
+            centroid = cpts.mean(axis=0)
+            objects.append(
+                SegObject(
+                    label="tree",
+                    volume_m3=_cluster_volume(cpts, plane, cell),
+                    num_points=len(members),
+                    north_m=float(centroid[0]),
+                    east_m=float(centroid[1]),
+                )
+            )
+
+    report("segment 6/6: writing class clouds + labels")
+    counts = {k: sum(o.label == k for o in objects) for k in OBJECT_CLASSES}
+    point_counts = {k: int((labels == i).sum()) for i, k in enumerate(CLASSES)}
+    cloud_path, class_paths = _write_class_clouds(pts, labels, out_dir)
+    labels_path = out_dir / "labels.npz"
+    np.savez_compressed(
+        labels_path,
+        points=pts.astype(np.float32),
+        colors=(cols * 255).astype(np.uint8),
+        labels=labels,
+        plane=plane.astype(np.float64),
+        classes=np.array(CLASSES),
+    )
     logger.info("Segmented scene: %s from %d objects", counts, len(objects))
     return SegmentationResult(
         counts=counts,
         objects=objects,
+        point_counts=point_counts,
         cloud_path=cloud_path,
+        labels_path=labels_path,
+        class_cloud_paths=class_paths,
         up_vector=(float(plane[0]), float(plane[1]), float(plane[2])),
     )
 
 
-def _write_segmented_cloud(
-    full: o3d.geometry.PointCloud,
-    above: o3d.geometry.PointCloud,
-    point_label: np.ndarray,
-    output_dir: Path,
-) -> Path:
-    """Ground grey + above-ground points coloured by class, written as PLY."""
-    ground_pts = np.asarray(full.points)
-    ground_cols = np.tile(_COLORS["ground"], (len(ground_pts), 1))
-    above_pts = np.asarray(above.points)
-    above_cols = np.array([_COLORS[str(lbl)] for lbl in point_label])
+def _write_class_clouds(
+    pts: np.ndarray, labels: np.ndarray, output_dir: Path
+) -> tuple[Path, dict[str, Path]]:
+    """segmented.ply (all classes, class-coloured) + one PLY per class.
 
+    Per-class files let the 3D viewer toggle classes on/off independently.
+    """
+    colors = np.array([CLASS_COLORS[k] for k in CLASSES])[labels]
     out = o3d.geometry.PointCloud()
-    out.points = o3d.utility.Vector3dVector(np.vstack([ground_pts, above_pts]))
-    out.colors = o3d.utility.Vector3dVector(np.vstack([ground_cols, above_cols]))
-    dst = output_dir / "segmented.ply"
-    o3d.io.write_point_cloud(str(dst), out)
-    return dst
+    out.points = o3d.utility.Vector3dVector(pts)
+    out.colors = o3d.utility.Vector3dVector(colors)
+    combined = output_dir / "segmented.ply"
+    o3d.io.write_point_cloud(str(combined), out)
+
+    class_paths: dict[str, Path] = {}
+    for i, klass in enumerate(CLASSES):
+        idx = np.where(labels == i)[0]
+        if len(idx) == 0:
+            continue
+        sub = out.select_by_index(idx)
+        dst = output_dir / f"seg_{klass}.ply"
+        o3d.io.write_point_cloud(str(dst), sub)
+        class_paths[klass] = dst
+    return combined, class_paths

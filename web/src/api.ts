@@ -124,10 +124,22 @@ export interface SegObject {
   east_m: number;
 }
 
+export interface SegClass {
+  key: string;
+  color: string; // CSS hex; same colour in 3D / ortho / photo overlays
+  point_count: number;
+  object_count: number | null; // null for surface classes (ground, road)
+  total_volume_m3: number | null;
+  cloud_url: string | null;
+  ortho_overlay_url: string | null;
+}
+
 export interface SegResult {
   counts: Record<string, number>;
   objects: SegObject[];
+  classes: SegClass[];
   cloud_url: string;
+  ortho_url: string | null;
   up_vector: number[] | null;
 }
 
@@ -145,6 +157,17 @@ export function startSegmentJob(): Promise<SegJob> {
 
 export function getSegmentJob(jobId: string): Promise<SegJob> {
   return request<SegJob>(`/segment/jobs/${jobId}`);
+}
+
+/** Photos that have a camera pose — each can display a segmentation overlay. */
+export function fetchOverlayPhotos(): Promise<string[]> {
+  return request<{ images: string[] }>("/segment/photos").then((body) => body.images);
+}
+
+/** URL of one photo with the given classes' points projected onto it. */
+export function photoOverlayUrl(name: string, classes: string[], width = 1200): string {
+  const cls = encodeURIComponent(classes.join(","));
+  return `${API_BASE}/segment/photo/${encodeURIComponent(name)}?classes=${cls}&width=${width}`;
 }
 
 /** Turn a backend-relative download URL (e.g. /volume/files/x.ply) into a link href. */
