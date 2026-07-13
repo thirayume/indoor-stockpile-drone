@@ -1,0 +1,6 @@
+# Source datasets fetched by setup-data. One per line: name <TAB> url <TAB> commit
+# Pinned commits so every machine reconstructs from byte-identical inputs.
+# Images land in data/odm/<name>/images/ where dataset_utils expects them.
+banana	https://github.com/pierotofy/dataset_banana.git	2778294e4a73aec8f37747e0d2edfc4cb38b23a6
+brighton_beach	https://github.com/pierotofy/drone_dataset_brighton_beach.git	9506a9bf09c9678b7d0b80b014af5b606c8a7255
+toledo	https://github.com/OpenDroneMap/odm_data_toledo.git	278ef9a19003af34927bfc6774d334ee097c884d

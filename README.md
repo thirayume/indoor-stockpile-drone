@@ -45,10 +45,36 @@ The ODMdata catalog is a git submodule at `data/odm/`, so clone with
 submodules:
 
 ```bash
-git clone --recurse-submodules <repo-url>
+git clone --recurse-submodules https://github.com/thirayume/indoor-stockpile-drone.git
 # or, in an existing checkout:
 git submodule update --init --recursive
 ```
+
+## Set up on a new machine (fetch the datasets)
+
+The source images (~1 GB across banana / brighton_beach / toledo) are **not**
+in this repo — they live in their own upstream repos. One script fetches all
+of them, pinned to exact commits so every machine reconstructs from
+byte-identical inputs:
+
+```powershell
+# Windows
+powershell -ExecutionPolicy Bypass -File scripts\setup-data.ps1
+```
+```bash
+# macOS / Linux / Git Bash
+bash scripts/setup-data.sh
+```
+
+It is idempotent — safe to re-run to repair or update `data/odm/`. After it
+finishes, start the app and run a reconstruction (below); reconstruction
+outputs (`data/opensfm_project/`, ~230 MB, regenerated per run) are derived
+data and are intentionally not shipped. Same images + same code = same
+results, so a fresh machine matches this one after one reconstruction.
+
+To carry a **prebuilt** reconstruction to another PC (skip the ~30 min run and
+segment immediately), copy the whole `data/opensfm_project/` folder across by
+any means (USB, cloud) — it is self-contained.
 
 ## Quick start (Docker)
 
