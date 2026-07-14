@@ -36,8 +36,12 @@ foreach ($line in Get-Content $manifest) {
     git -C $dest fetch --depth 1 origin $commit
     git -C $dest checkout --quiet $commit
 
+    # Count image files. Note: Get-ChildItem -Include matches nothing unless the
+    # path ends in a wildcard or -Recurse is used, so filter by extension here.
     $imagesDir = Join-Path $dest "images"
-    $count = (Get-ChildItem $imagesDir -File -Include *.jpg,*.jpeg,*.png -ErrorAction SilentlyContinue | Measure-Object).Count
+    $imageExts = @(".jpg", ".jpeg", ".png", ".tif", ".tiff")
+    $count = (Get-ChildItem $imagesDir -File -ErrorAction SilentlyContinue |
+        Where-Object { $imageExts -contains $_.Extension.ToLower() } | Measure-Object).Count
     if ($count -eq 0) { Fail "$name has no images at $imagesDir" }
     Write-Host "    $count images @ $($commit.Substring(0,8))" -ForegroundColor Green
 }
