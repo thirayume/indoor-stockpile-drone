@@ -78,36 +78,44 @@ any means (USB, cloud) — it is self-contained.
 
 ## Quick start (Docker)
 
+First copy the environment template — it wires the two things this project
+needs from compose (host ports + the OpenSfM overlay), and matches the
+reference machine exactly:
+
 ```bash
-docker compose up --build        # or: docker-compose up --build
+cp .env.example .env        # Windows cmd: copy .env.example .env
 ```
 
-- Web UI: http://localhost:5173
+Then bring it up (the `.env` is read automatically):
+
+```bash
+docker compose up -d --build     # or: docker-compose up -d --build
+```
+
+- Web UI: http://localhost:5273  *(the port set in `.env.example`; edit
+  `WEB_PORT` there if you prefer 5173 or another free port)*
 - API: http://localhost:8000 — interactive docs at http://localhost:8000/docs
 
-If those ports are taken by other apps, override them in a `.env` file next
-to `docker-compose.yml` (read automatically, gitignored):
+The `COMPOSE_FILE` line in `.env` layers `docker-compose.opensfm.yml` on top
+automatically, so `docker compose` commands need no `-f` flags — the backend
+comes up **with the OpenSfM CLI and a writable data mount**, ready to run real
+reconstructions. (The first build compiles OpenSfM from source and takes a
+while; it is cached afterwards.)
 
-```
-WEB_PORT=5273
-BACKEND_PORT=8000
-```
-
-Then test the workflow end-to-end in the UI: **1.** pick a dataset (needs one
-cloned under `data/odm/`, see *Datasets* below) → **2.** *Run orbit
-simulation* (offline mode unless SITL is up) → **3.** *Run reconstruction &
-volume* (needs the OpenSfM CLI, see below) and use the download links.
+Then test the workflow end-to-end in the UI: **1.** pick a dataset (fetched by
+`setup-data`, above) → **2.** *Run flight simulation* → **3.** *Run
+reconstruction & volume* (GPS is off by default — tick the box only for
+GPS-carrying datasets) → **4.** *Segment objects* (trees / roofs / roads /
+vehicles / piles, with toggleable overlays on the 3D view, the merged
+top-down photo, and the original photos).
 
 Build notes:
 
 - The web image serves a production build via `vite preview`; switch the
   compose `target` to `dev` for the hot-reload dev server.
-- The backend image ships Open3D but not OpenSfM. To bake OpenSfM in
-  (long build — compiles against OpenCV/Ceres/Eigen):
-
-  ```bash
-  docker compose build --build-arg INSTALL_OPENSFM=true backend
-  ```
+- To run the **lightweight backend without OpenSfM** (Open3D volume and
+  segmentation on a prebuilt point cloud, no reconstruction), delete the
+  `COMPOSE_PATH_SEPARATOR`/`COMPOSE_FILE` lines from `.env`.
 
 ## Local development (fast — don't rebuild Docker to code)
 
