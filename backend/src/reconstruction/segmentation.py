@@ -26,7 +26,9 @@ Thresholds are heuristics (tunable) — good enough to demonstrate
 segment + count + measure, not a trained semantic model.
 """
 
-from collections.abc import Callable
+import colorsys
+import json
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -58,6 +60,87 @@ CLASS_COLORS: dict[str, tuple[float, float, float]] = {
 }
 # Object classes get counted + measured; surface classes are overlay-only.
 OBJECT_CLASSES = ("tree", "roof", "car", "pile")
+
+
+# ---------------------------------------------------------------------------
+# Class registry: which classes the CURRENT segmentation output contains.
+# The heuristic mode always uses the static CLASSES above; the ML mode
+# (ml_segmentation.py) discovers its classes at runtime. Both write
+# seg_classes.json next to labels.npz so the API serves whatever the latest
+# run produced — same label-id order as the "classes" array in labels.npz.
+# ---------------------------------------------------------------------------
+
+REGISTRY_FILENAME = "seg_classes.json"
+
+# Words that mark a class as a surface (overlay-only: no counting/volumes)...
+_SURFACE_WORDS = {
+    "ground", "road", "street", "path", "pavement", "sidewalk", "floor",
+    "grass", "lawn", "field", "water", "pond", "lake", "river", "sea",
+    "beach", "sand", "soil", "earth", "gravel", "sky", "wall", "fence",
+    "other",
+}
+# ...but a pile/heap of a surface material ("pile of sand") is an object,
+# and so are containers of one ("water tank").
+_OBJECT_WORDS = {
+    "pile", "heap", "mound", "stack", "stockpile", "bag", "sack",
+    "tank", "container", "silo", "truck",
+}
+
+
+def is_object_class(key: str) -> bool:
+    """Should this class be instance-counted and measured (vs overlay-only)?"""
+    words = set(key.lower().replace("-", " ").replace("_", " ").split())
+    if words & _OBJECT_WORDS:
+        return True
+    return not (words & _SURFACE_WORDS)
+
+
+def class_color(key: str, index: int) -> tuple[float, float, float]:
+    """Stable colour: the fixed palette for known keys, golden-angle otherwise.
+
+    Keeping known keys (car, tree, road, ...) on the heuristic palette makes
+    the two modes look consistent; unknown ML classes get well-separated hues
+    deterministic in their registry position.
+    """
+    if key in CLASS_COLORS:
+        return CLASS_COLORS[key]
+    hue = (index * 0.61803398875) % 1.0
+    return colorsys.hsv_to_rgb(hue, 0.75, 0.95)
+
+
+def write_class_registry(
+    output_dir: Path,
+    classes: Sequence[str],
+    colors: dict[str, tuple[float, float, float]],
+) -> Path:
+    """Persist the class list (in label-id order) with colours + object flags."""
+    payload = {
+        "classes": [
+            {"key": k, "color": list(colors[k]), "is_object": is_object_class(k)}
+            for k in classes
+        ]
+    }
+    path = output_dir / REGISTRY_FILENAME
+    path.write_text(json.dumps(payload, indent=1))
+    return path
+
+
+def load_class_registry(
+    output_dir: Path,
+) -> tuple[list[str], dict[str, tuple[float, float, float]], set[str]]:
+    """(ordered class keys, colours, object-class keys) of the latest run.
+
+    Falls back to the static heuristic classes when no registry exists
+    (outputs from before the registry, or no segmentation yet).
+    """
+    path = output_dir / REGISTRY_FILENAME
+    if not path.is_file():
+        return list(CLASSES), dict(CLASS_COLORS), set(OBJECT_CLASSES)
+    entries = json.loads(path.read_text())["classes"]
+    classes = [str(e["key"]) for e in entries]
+    colors = {str(e["key"]): tuple(float(c) for c in e["color"]) for e in entries}
+    objects = {str(e["key"]) for e in entries if e["is_object"]}
+    return classes, colors, objects
 
 GREEN_EXG = 0.02  # per-point ExG above this -> vegetation
 ROAD_SAT = 0.10  # saturation below this (and not green, not dark) -> paved
@@ -102,6 +185,11 @@ class SegmentationResult:
     labels_path: Path
     class_cloud_paths: dict[str, Path]
     up_vector: tuple[float, float, float]
+    # Label-id order + colours of THIS run (ML runs discover them at runtime).
+    classes: tuple[str, ...] = CLASSES
+    colors: dict[str, tuple[float, float, float]] = field(
+        default_factory=lambda: dict(CLASS_COLORS)
+    )
     objects_total: int = field(init=False)
 
     def __post_init__(self) -> None:
@@ -109,7 +197,12 @@ class SegmentationResult:
 
 
 def _cluster_volume(points: np.ndarray, plane: np.ndarray, cell_size: float) -> float:
-    """2.5D grid volume of a point set above the floor plane."""
+    """2.5D grid volume of a point set above the floor plane.
+
+    Cell means are clamped at zero: an ML-labelled cluster can sit below the
+    RANSAC floor (e.g. water below a beach plane), and integrating negative
+    heights would report a negative volume.
+    """
     normal = plane[:3]
     heights = points @ normal + plane[3]
     u, v = _plane_basis(normal)
@@ -119,7 +212,7 @@ def _cluster_volume(points: np.ndarray, plane: np.ndarray, cell_size: float) -> 
     _, inverse = np.unique(cell_ids, return_inverse=True)
     sums = np.bincount(inverse, weights=heights)
     counts = np.bincount(inverse)
-    return float(cell_size**2 * np.sum(sums / counts))
+    return float(cell_size**2 * np.sum(np.maximum(sums / counts, 0.0)))
 
 
 def _classify_cluster(
@@ -262,6 +355,7 @@ def segment_scene(
     counts = {k: sum(o.label == k for o in objects) for k in OBJECT_CLASSES}
     point_counts = {k: int((labels == i).sum()) for i, k in enumerate(CLASSES)}
     cloud_path, class_paths = _write_class_clouds(pts, labels, out_dir)
+    write_class_registry(out_dir, CLASSES, CLASS_COLORS)
     labels_path = out_dir / "labels.npz"
     np.savez_compressed(
         labels_path,
@@ -284,13 +378,22 @@ def segment_scene(
 
 
 def _write_class_clouds(
-    pts: np.ndarray, labels: np.ndarray, output_dir: Path
+    pts: np.ndarray,
+    labels: np.ndarray,
+    output_dir: Path,
+    classes: Sequence[str] = CLASSES,
+    class_colors: dict[str, tuple[float, float, float]] | None = None,
 ) -> tuple[Path, dict[str, Path]]:
     """segmented.ply (all classes, class-coloured) + one PLY per class.
 
     Per-class files let the 3D viewer toggle classes on/off independently.
+    Stale seg_*.ply from an earlier run (possibly a different class set) are
+    removed first so only the current classes remain on disk.
     """
-    colors = np.array([CLASS_COLORS[k] for k in CLASSES])[labels]
+    for old in output_dir.glob("seg_*.ply"):
+        old.unlink()
+    palette = class_colors or CLASS_COLORS
+    colors = np.array([palette[k] for k in classes])[labels]
     out = o3d.geometry.PointCloud()
     out.points = o3d.utility.Vector3dVector(pts)
     out.colors = o3d.utility.Vector3dVector(colors)
@@ -298,7 +401,7 @@ def _write_class_clouds(
     o3d.io.write_point_cloud(str(combined), out)
 
     class_paths: dict[str, Path] = {}
-    for i, klass in enumerate(CLASSES):
+    for i, klass in enumerate(classes):
         idx = np.where(labels == i)[0]
         if len(idx) == 0:
             continue

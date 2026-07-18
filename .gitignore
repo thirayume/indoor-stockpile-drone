@@ -16,6 +16,9 @@ data/opensfm_project/images
 # Downloaded reference material (refresh with: python tools/download_refs.py)
 docs/opensfm/
 
+# ML model weights (auto-downloaded on first ML segmentation run)
+data/models/
+
 # OpenSfM pipeline outputs (regenerated from images/) — everything in the
 # project folder except config.yaml and an optional real gcp_list.txt
 data/opensfm_project/*

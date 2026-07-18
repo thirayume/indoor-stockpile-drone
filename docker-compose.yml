@@ -6,6 +6,9 @@ services:
         # Bake the OpenSfM CLI into the image (long C++ build):
         #   INSTALL_OPENSFM=true docker compose build backend
         INSTALL_OPENSFM: ${INSTALL_OPENSFM:-false}
+        # ML segmentation deps (torch CPU + ultralytics, ~1.5 GB). Default on;
+        # set INSTALL_ML=false for a slim image without the "ml" segment mode.
+        INSTALL_ML: ${INSTALL_ML:-true}
     # Auto-recover if the process dies. A native crash in a reconstruction
     # library (Open3D/OpenSfM) can segfault the whole worker; without this the
     # API would stay down until manually restarted.

@@ -1,9 +1,9 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.config import settings
 from core.jobs import Job, job_manager
@@ -16,7 +16,7 @@ from reconstruction.overlay import (
     render_photo_overlay_cached,
 )
 from reconstruction.pipeline import run_segmentation_isolated
-from reconstruction.segmentation import CLASS_COLORS, CLASSES, OBJECT_CLASSES
+from reconstruction.segmentation import load_class_registry
 
 logger = get_logger(__name__)
 
@@ -78,8 +78,21 @@ def _output_dir() -> Path:
     return find_point_cloud(settings.opensfm_project_dir).parent
 
 
+class SegmentRequest(BaseModel):
+    mode: Literal["geometry", "ml"] = Field(
+        default="geometry",
+        description='"geometry" = colour+shape heuristics (fixed classes); '
+        '"ml" = open-vocabulary model that finds classes in the photos.',
+    )
+    classes: list[str] | None = Field(
+        default=None,
+        description="ml mode only: text prompts (e.g. ['car', 'pile of sand', "
+        "'pond']). Empty/omitted = prompt-free auto-detect.",
+    )
+
+
 @router.post("/jobs", response_model=SegJobResponse, status_code=202)
-def start_segmentation() -> SegJobResponse:
+def start_segmentation(request: SegmentRequest | None = None) -> SegJobResponse:
     """Segment the current reconstruction into classes (background job)."""
     try:
         cloud = find_point_cloud(settings.opensfm_project_dir)
@@ -88,15 +101,24 @@ def start_segmentation() -> SegJobResponse:
             status_code=404, detail="no reconstruction yet — run a reconstruction first"
         ) from exc
 
+    mode = request.mode if request else "geometry"
+    prompts = [c for c in (request.classes or []) if c.strip()] if request else []
+
     def run(job: Job) -> dict[str, Any]:
         def progress(phase: str) -> None:
             job.progress = phase
 
-        data = run_segmentation_isolated(cloud, on_progress=progress)
+        data = run_segmentation_isolated(
+            cloud, on_progress=progress, mode=mode, class_prompts=prompts
+        )
+
+        # The worker reports the run's class set (dynamic in ml mode).
+        class_infos: list[dict[str, Any]] = data["classes"]
+        palette = {c["key"]: tuple(c["color"]) for c in class_infos}
 
         job.progress = "rendering top-down overlays"
         labels_path = Path(data["labels_path"])
-        ortho_files = render_ortho(labels_path, labels_path.parent, CLASS_COLORS)
+        ortho_files = render_ortho(labels_path, labels_path.parent, palette)
 
         # Merge every photo into one seamless top-down image. Best-effort:
         # the mosaic needs photo files + poses, and its absence should not
@@ -115,18 +137,17 @@ def start_segmentation() -> SegJobResponse:
             logger.exception("photo mosaic failed; continuing without it")
 
         objects = data["objects"]
-        point_counts: dict[str, int] = data.get("point_counts", {})
         classes = []
-        for key in CLASSES:
-            points = point_counts.get(key, 0)
-            if points == 0:
+        for info in class_infos:
+            key = info["key"]
+            if info["point_count"] == 0:
                 continue
-            is_object = key in OBJECT_CLASSES
+            is_object = info["is_object"]
             classes.append(
                 {
                     "key": key,
-                    "color": _hex(CLASS_COLORS[key]),
-                    "point_count": points,
+                    "color": _hex(tuple(info["color"])),
+                    "point_count": info["point_count"],
                     "object_count": data["counts"].get(key) if is_object else None,
                     "total_volume_m3": (
                         sum(o["volume_m3"] for o in objects if o["label"] == key)
@@ -151,7 +172,9 @@ def start_segmentation() -> SegJobResponse:
             "up_vector": data["up_vector"],
         }
 
-    job = job_manager.submit(kind="segmentation", params={}, fn=run)
+    job = job_manager.submit(
+        kind="segmentation", params={"mode": mode, "classes": prompts}, fn=run
+    )
     return _job_response(job)
 
 
@@ -166,10 +189,17 @@ def get_segmentation_job(job_id: str) -> SegJobResponse:
 @router.get("/ortho/{filename}")
 def download_ortho(filename: str) -> FileResponse:
     """Top-down render (base or one class overlay) written by the last job."""
-    allowed = {"ortho_base.png", "ortho_photo.png"} | {f"ortho_{k}.png" for k in CLASSES}
+    try:
+        out_dir = _output_dir()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="no reconstruction yet") from exc
+    # The class set is dynamic (ml mode), so the whitelist comes from the
+    # registry the last segmentation run wrote next to its outputs.
+    reg_classes, _, _ = load_class_registry(out_dir)
+    allowed = {"ortho_base.png", "ortho_photo.png"} | {f"ortho_{k}.png" for k in reg_classes}
     if filename not in allowed:
         raise HTTPException(status_code=404, detail=f"unknown file: {filename}")
-    path = _output_dir() / filename
+    path = out_dir / filename
     if not path.is_file():
         raise HTTPException(status_code=404, detail="not rendered yet — run segmentation first")
     return FileResponse(path, media_type="image/png")
@@ -204,12 +234,14 @@ def photo_overlay(
     if not labels_path.is_file():
         raise HTTPException(status_code=404, detail="run segmentation first")
 
+    # Class ids/colours follow the registry of the last run (label-id order).
+    reg_classes, reg_colors, _ = load_class_registry(labels_path.parent)
     keys = [k for k in classes.split(",") if k]
-    unknown = [k for k in keys if k not in CLASSES]
+    unknown = [k for k in keys if k not in reg_classes]
     if unknown:
         raise HTTPException(status_code=422, detail=f"unknown classes: {unknown}")
-    class_ids = [CLASSES.index(k) for k in keys]
-    colors_by_id = [CLASS_COLORS[k] for k in CLASSES]
+    class_ids = [reg_classes.index(k) for k in keys]
+    colors_by_id = [reg_colors[k] for k in reg_classes]
 
     path = render_photo_overlay_cached(
         labels_path=labels_path,

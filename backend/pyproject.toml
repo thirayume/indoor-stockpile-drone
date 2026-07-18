@@ -26,6 +26,16 @@ dev = [
     "httpx>=0.27",
     "ruff>=0.4",
 ]
+# ML segmentation (YOLOE open-vocabulary instance segmentation). Optional:
+# without it the "ml" segmentation mode returns a clean install-hint error.
+# ultralytics pulls in torch/torchvision — on Linux/Docker install the CPU
+# wheels first (see backend/Dockerfile) to avoid the multi-GB CUDA build.
+ml = [
+    "ultralytics>=8.3.100",
+    # Text encoder used by YOLOE text prompts; without it ultralytics
+    # pip-installs the same package at runtime on first use.
+    "clip @ git+https://github.com/ultralytics/CLIP.git",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

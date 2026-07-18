@@ -25,7 +25,7 @@ def _wait_for_terminal(job_id: str, timeout_s: float = 10.0) -> dict:
 def test_job_success_flow(monkeypatch) -> None:
     fake_ply = settings.data_dir / "opensfm_project" / "undistorted" / "depthmaps" / "merged.ply"
 
-    def fake_run(dataset_id, use_symlink=True, on_progress=None):
+    def fake_run(dataset_id, use_symlink=True, on_progress=None, use_exif_gps=False):
         if on_progress is not None:
             on_progress("opensfm reconstruct (5/9)")
         return VolumeResult(
@@ -52,7 +52,7 @@ def test_job_success_flow(monkeypatch) -> None:
 
 
 def test_job_failure_flow(monkeypatch) -> None:
-    def fake_run(dataset_id, use_symlink=True, on_progress=None):
+    def fake_run(dataset_id, use_symlink=True, on_progress=None, use_exif_gps=False):
         raise RuntimeError("OpenSfM CLI not found")
 
     monkeypatch.setattr(volume_route, "run_reconstruction_and_volume", fake_run)

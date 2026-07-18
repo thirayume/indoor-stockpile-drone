@@ -49,6 +49,26 @@ RUN if [ "$INSTALL_OPENSFM" = "true" ]; then \
         && rm -rf /var/lib/apt/lists/* ; \
     fi
 
+# Optional (default ON): ML segmentation deps (YOLOE via ultralytics).
+# torch/torchvision come from the CPU wheel index — the default PyPI wheels
+# drag in the multi-GB CUDA stack, useless in this CPU container. Model
+# weights are NOT baked in; they download on first use into
+# <data>/models (a writable mount — see docker-compose.opensfm.yml).
+ARG INSTALL_ML=true
+RUN if [ "$INSTALL_ML" = "true" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends git \
+        && pip install --no-cache-dir torch torchvision \
+            --index-url https://download.pytorch.org/whl/cpu \
+        && pip install --no-cache-dir "ultralytics>=8.3.100" \
+        # CLIP is what ultralytics would otherwise pip-install AT RUNTIME the
+        # first time text prompts are used (ephemeral in a container, needs
+        # network) — bake it in instead.
+        && pip install --no-cache-dir "git+https://github.com/ultralytics/CLIP.git" \
+        && rm -rf /var/lib/apt/lists/* ; \
+    fi
+# Writable settings dir for ultralytics (silences its /root/.config warning).
+ENV YOLO_CONFIG_DIR=/tmp/Ultralytics
+
 # Application code last — the cheapest layer to rebuild.
 COPY src ./src
 COPY run_example_reconstruction.py ./

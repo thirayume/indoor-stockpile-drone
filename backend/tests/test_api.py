@@ -45,13 +45,17 @@ def test_volume_example_unknown_dataset_returns_404() -> None:
     assert response.status_code == 404
 
 
-def test_volume_example_accepts_empty_body() -> None:
+def test_volume_example_accepts_empty_body(monkeypatch, tmp_path) -> None:
     # Body is optional (defaults to the example dataset); the request must
-    # never be rejected as a validation error. The outcome depends on the
-    # environment: 404 without the banana dataset cloned, 500 without the
-    # OpenSfM CLI, 200 with both present.
+    # never be rejected as a validation error. Point the app at an empty data
+    # dir so the call fails fast with 404 — running against the real data dir
+    # would MUTATE data/opensfm_project (prepare wipes stale outputs).
+    from core.config import settings
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setattr(settings, "opensfm_project_root", tmp_path / "opensfm_project")
     response = client.post("/volume/example", json={})
-    assert response.status_code != 422
+    assert response.status_code == 404
 
 
 def test_volume_example_success_response_shape(monkeypatch) -> None:

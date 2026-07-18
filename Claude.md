@@ -46,7 +46,9 @@ indoor-stockpile-drone/
 │   │   ├── reconstruction/
 │   │   │   ├── __init__.py
 │   │   │   ├── opensfm_runner.py     # Wrap OpenSfM CLI
-│   │   │   └── volume_compute.py     # Use Open3D to compute volume
+│   │   │   ├── volume_compute.py     # Use Open3D to compute volume
+│   │   │   ├── segmentation.py       # Heuristic classes + class registry
+│   │   │   └── ml_segmentation.py    # YOLOE open-vocab masks voted onto 3D
 │   │   ├── api/
 │   │   │   ├── __init__.py
 │   │   │   ├── main.py               # FastAPI app

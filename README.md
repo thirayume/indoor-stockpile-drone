@@ -11,8 +11,15 @@ indoor environments:
   (ODMdata) producing a dense point cloud (`merged.ply`), optionally
   GPS-georeferenced.
 - **Volume** — Open3D floor-plane removal + 2.5D grid integration.
-- **Segmentation** — geometry + colour classification of the reconstruction
-  into trees and roofs, with counts and per-object volume (no ML models).
+- **Segmentation** — two modes over the same reconstruction:
+  - *AI (YOLOE)* — open-vocabulary instance segmentation over the photos,
+    voted onto the 3D points. Auto-detects arbitrary objects (cars, ponds,
+    piles of soil/sand, …) or takes free-text class prompts.
+  - *Geometry heuristic* — colour+shape rules for a fixed class set
+    (tree/roof/road/car/pile), no ML dependencies.
+
+  Both produce counts, per-object volumes, and per-class overlays that
+  toggle in all three views (3D, orthophoto, original photos).
 - **API + UI** — FastAPI backend and a Vite + React + TypeScript web UI.
 
 No real drone hardware is involved; everything is simulation / offline
@@ -250,6 +257,39 @@ python tools/download_refs.py --force    # re-download everything
 > (`gcp_list.txt` + `bundle_use_gcp: yes` in `config.yaml`) or scale the
 > model by a known distance.
 
+## Segmentation modes (step 4)
+
+Step 4 segments the latest reconstruction into classes whose overlays toggle
+in **all three views** — the 3D point cloud, the top-down orthophoto, and the
+original photos:
+
+- **AI auto-detect** (default): YOLOE (prompt-free) runs over every posed
+  photo with its built-in ~4.6k-class vocabulary; each 2D mask votes onto the
+  3D points it covers (confidence-weighted, across all photos), so a class
+  only sticks where several photos agree. Instances are then counted by 3D
+  clustering — the same car seen in 30 photos stays one car — and each object
+  gets a 2.5D grid volume.
+- **AI with my classes**: same pipeline, but YOLOE runs with your free-text
+  prompts ("car, pond, pile of sand, …") — best when you know the domain
+  vocabulary (e.g. fertiliser piles, sacks). First prompt run downloads a
+  ~600 MB text encoder (one-time, cached in `data/models/`).
+- **Geometry heuristic**: the original colour+shape rules (fixed classes:
+  ground/road/tree/roof/car/pile/other), no ML dependencies.
+
+Notes:
+
+- Model weights auto-download on first use into `data/models/` (gitignored;
+  needs the writable data mount from the OpenSfM overlay compose file).
+- The ML deps (torch CPU + ultralytics, ~1.5 GB in the image) install by
+  default; set `INSTALL_ML=false` in `.env` for a slim image without them.
+  ultralytics is AGPL-3.0 — fine for this internal prototype, review before
+  any public distribution.
+- ML classes with poor 3D coverage show weakly in every view: water (ponds)
+  reconstructs badly in SfM, so a detected pond may have few points to
+  colour. That is a photogrammetry limit, not a detection miss.
+- CPU inference takes a few seconds per photo (~5–10 min for the 87-photo
+  toledo dataset).
+
 ### Note on OpenSfM
 
 The default backend image does **not** build OpenSfM (heavy C++ build, no
@@ -306,6 +346,10 @@ the images — no action needed.
 | POST   | `/volume/run`             | Blocking reconstruction (scripts only)             |
 | POST   | `/volume/example`         | Blocking demo run, defaults to `banana`            |
 | GET    | `/volume/files/{filename}`| Download `merged.ply` / `stockpile_mesh.ply` etc.  |
+| POST   | `/segment/jobs`           | Queue segmentation (`{"mode": "ml"\|"geometry", "classes": [...]}`) |
+| GET    | `/segment/jobs/{id}`      | Poll segmentation job status / result              |
+| GET    | `/segment/ortho/{file}`   | Top-down base image or per-class overlay PNG       |
+| GET    | `/segment/photo/{name}`   | Original photo with selected class overlays        |
 
 Interactive documentation for all endpoints: http://localhost:8000/docs
 

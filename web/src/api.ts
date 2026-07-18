@@ -152,8 +152,16 @@ export interface SegJob {
   result: SegResult | null;
 }
 
-export function startSegmentJob(): Promise<SegJob> {
-  return post<SegJob>("/segment/jobs", {});
+export type SegMode = "geometry" | "ml";
+
+/** Start a segmentation job.
+ *  mode "ml" runs the open-vocabulary model; a non-empty classes list switches
+ *  it to text prompts (e.g. "pile of sand"), empty = prompt-free auto-detect.
+ *  mode "geometry" is the original colour+shape heuristic. */
+export function startSegmentJob(mode: SegMode = "geometry", classes?: string[]): Promise<SegJob> {
+  const body: Record<string, unknown> = { mode };
+  if (classes && classes.length > 0) body.classes = classes;
+  return post<SegJob>("/segment/jobs", body);
 }
 
 export function getSegmentJob(jobId: string): Promise<SegJob> {

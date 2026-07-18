@@ -28,6 +28,26 @@ class Settings(BaseSettings):
         "docker run --rm -p 14540:14540/udp jonasvautherin/px4-gazebo-headless:1.14"
     )
 
+    # --- ML segmentation (YOLOE open-vocabulary instance segmentation) ---
+    # Weights auto-download into ml_models_dir on first use (needs a writable
+    # data mount in Docker — the OpenSfM overlay compose file provides one).
+    ml_models_dir: Path | None = None  # default: <data_dir>/models
+    # Text-prompt variant; the prompt-free auto-detect model name is derived
+    # from it ("-seg" -> "-seg-pf"). Sizes: 11s (fast) / 11m / 11l (accurate).
+    ml_model: str = "yoloe-11s-seg.pt"
+    # Low on purpose: aerial photos give open-vocab models weak confidences,
+    # and the cross-photo vote (MIN_VOTE_SCORE) filters one-off detections.
+    ml_confidence: float = 0.1
+    ml_image_size: int = 1024
+    # Split each photo into tiles^2 overlapping crops for inference. Objects
+    # in nadir aerial shots are tiny at model resolution; tiling is the
+    # standard fix. 1 = no tiling.
+    ml_tiles: int = 2
+
+    @property
+    def ml_models_path(self) -> Path:
+        return self.ml_models_dir or self.data_dir / "models"
+
     @property
     def odm_datasets_dir(self) -> Path:
         return self.data_dir / "odm"

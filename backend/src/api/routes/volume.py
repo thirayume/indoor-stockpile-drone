@@ -202,7 +202,7 @@ def _data_relative(path: Path) -> str:
 
 def _downloadable_files() -> dict[str, list[Path]]:
     """Whitelist of downloadable artefacts and where the pipeline puts them."""
-    from reconstruction.segmentation import CLASSES
+    from reconstruction.segmentation import CLASSES, load_class_registry
 
     project = settings.opensfm_project_dir
     depthmaps = project / "undistorted" / "depthmaps"
@@ -212,7 +212,12 @@ def _downloadable_files() -> dict[str, list[Path]]:
         "stockpile_mesh.ply": [depthmaps / "stockpile_mesh.ply", project / "stockpile_mesh.ply"],
         "segmented.ply": [depthmaps / "segmented.ply", project / "segmented.ply"],
     }
-    for klass in CLASSES:  # per-class clouds for the 3D layer toggles
+    # Per-class clouds for the 3D layer toggles. ML runs discover classes at
+    # runtime, so extend the static set with both candidate dirs' registries.
+    class_keys = set(CLASSES)
+    for outputs in (depthmaps, project):
+        class_keys.update(load_class_registry(outputs)[0])
+    for klass in class_keys:
         name = f"seg_{klass}.ply"
         files[name] = [depthmaps / name, project / name]
     return files

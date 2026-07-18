@@ -1,6 +1,7 @@
 """High-level entry points: dataset id in, volume/segmentation out."""
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,7 @@ def _run_isolated_worker(
     point_cloud: Path,
     what: str,
     on_progress: Callable[[str], None] | None = None,
+    extra_args: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run an Open3D worker in a subprocess so a native crash can't kill the API.
 
@@ -30,11 +32,19 @@ def _run_isolated_worker(
     """
     with tempfile.TemporaryDirectory() as tmp:
         result_json = Path(tmp) / "result.json"
+        cmd = [sys.executable, "-m", worker_module, str(point_cloud), "-", str(result_json)]
+        cmd += extra_args or []
+        # UTF-8 on both ends of the pipe: on Windows the default pipe encoding
+        # is cp1252, which chokes on the UTF-8 progress bars ML libraries
+        # print. errors="replace" keeps a truncated bar from killing the job.
         proc = subprocess.Popen(
-            [sys.executable, "-m", worker_module, str(point_cloud), "-", str(result_json)],
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         )
         error_msg: str | None = None
         assert proc.stdout is not None
@@ -81,10 +91,19 @@ def compute_volume_isolated(
 def run_segmentation_isolated(
     point_cloud: Path,
     on_progress: Callable[[str], None] | None = None,
+    mode: str = "geometry",
+    class_prompts: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Segment the scene (trees/roofs) in a subprocess; returns the raw dict."""
+    """Segment the scene in a subprocess; returns the raw dict.
+
+    mode "geometry" is the heuristic colour+shape pass; "ml" runs the
+    open-vocabulary model (class_prompts = text prompts, None = auto-detect).
+    """
+    extra = ["--mode", mode]
+    if class_prompts:
+        extra += ["--classes", json.dumps(class_prompts)]
     return _run_isolated_worker(
-        "reconstruction.segment_worker", point_cloud, "segmentation", on_progress
+        "reconstruction.segment_worker", point_cloud, "segmentation", on_progress, extra
     )
 
 

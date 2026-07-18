@@ -24,6 +24,20 @@ const CLASS_LABELS: Record<string, string> = {
   other: "other",
 };
 
+/** Display name for a class key: known keys get a friendly label, ML slugs
+ *  ("pile_of_sand") just get their underscores back as spaces. */
+function classLabel(key: string): string {
+  return CLASS_LABELS[key] ?? key.replace(/_/g, " ");
+}
+
+/** How to segment: the ML model (auto or with custom prompts) or the
+ *  original geometry heuristic. */
+type UiMode = "ml_auto" | "ml_custom" | "geometry";
+
+const DEFAULT_PROMPTS =
+  "car, truck, person, tree, building, road, pond, water, " +
+  "pile of soil, pile of sand, pile of gravel, container";
+
 /** Default layer visibility: hide the context classes so objects stand out. */
 function defaultVisibility(classes: SegClass[]): Record<string, boolean> {
   const vis: Record<string, boolean> = {};
@@ -40,6 +54,8 @@ export default function SegmentationPanel() {
   const [photos, setPhotos] = useState<string[]>([]);
   const [photoIdx, setPhotoIdx] = useState(0);
   const [orthoBase, setOrthoBase] = useState<"photo" | "points">("photo");
+  const [uiMode, setUiMode] = useState<UiMode>("ml_auto");
+  const [prompts, setPrompts] = useState(DEFAULT_PROMPTS);
 
   const running = job !== null && (job.status === "queued" || job.status === "running");
   const elapsed = useElapsedSeconds(startedAt, running);
@@ -71,7 +87,11 @@ export default function SegmentationPanel() {
     setError(null);
     setStartedAt(new Date().toISOString());
     try {
-      setJob(await startSegmentJob());
+      const classes =
+        uiMode === "ml_custom"
+          ? prompts.split(",").map((c) => c.trim()).filter((c) => c.length > 0)
+          : undefined;
+      setJob(await startSegmentJob(uiMode === "geometry" ? "geometry" : "ml", classes));
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -84,14 +104,54 @@ export default function SegmentationPanel() {
 
   return (
     <section>
-      <h2>4. Segment objects (trees, roofs, roads, vehicles, piles)</h2>
+      <h2>4. Segment objects</h2>
       <p style={{ fontSize: 13, color: "#666" }}>
-        Classifies the latest reconstruction by shape and colour, counts the
-        objects, and measures each one. The checkboxes below toggle each class
-        in <em>all three</em> views — 3D, top-down, and the original photos —
-        so you can verify the segmentation against reality. Run a
-        reconstruction (step 3) first.
+        Segments the latest reconstruction, counts the objects, and measures
+        each one. The checkboxes below toggle each class in <em>all three</em>{" "}
+        views — 3D, top-down, and the original photos — so you can verify the
+        segmentation against reality. Run a reconstruction (step 3) first.
       </p>
+      <div style={{ fontSize: 13, marginBottom: 8 }}>
+        <label style={{ display: "block", marginBottom: 2 }}>
+          <input
+            type="radio"
+            checked={uiMode === "ml_auto"}
+            onChange={() => setUiMode("ml_auto")}
+            disabled={running}
+          />{" "}
+          <strong>AI auto-detect</strong> — the model finds whatever objects
+          appear in the photos (cars, ponds, piles, …) by itself.
+        </label>
+        <label style={{ display: "block", marginBottom: 2 }}>
+          <input
+            type="radio"
+            checked={uiMode === "ml_custom"}
+            onChange={() => setUiMode("ml_custom")}
+            disabled={running}
+          />{" "}
+          <strong>AI with my classes</strong> — tell the model exactly what to
+          look for (comma-separated, free text):
+        </label>
+        {uiMode === "ml_custom" && (
+          <textarea
+            value={prompts}
+            onChange={(e) => setPrompts(e.target.value)}
+            disabled={running}
+            rows={2}
+            style={{ width: "100%", boxSizing: "border-box", margin: "2px 0 6px" }}
+          />
+        )}
+        <label style={{ display: "block" }}>
+          <input
+            type="radio"
+            checked={uiMode === "geometry"}
+            onChange={() => setUiMode("geometry")}
+            disabled={running}
+          />{" "}
+          <strong>Geometry heuristic</strong> — the original colour+shape rules
+          (fixed classes: trees, roofs, roads, vehicles, piles). No ML model.
+        </label>
+      </div>
       <button onClick={run} disabled={running}>
         {running ? "Segmenting…" : "Segment objects"}
       </button>
@@ -129,7 +189,7 @@ export default function SegmentationPanel() {
                   }}
                 />
                 {c.object_count !== null && <strong>{c.object_count} </strong>}
-                {CLASS_LABELS[c.key] ?? c.key}
+                {classLabel(c.key)}
                 {c.total_volume_m3 !== null && c.total_volume_m3 > 0 && (
                   <span style={{ color: "#666" }}> — {c.total_volume_m3.toFixed(1)} m³</span>
                 )}
@@ -255,8 +315,9 @@ export default function SegmentationPanel() {
 
           <p style={{ fontSize: 12, color: "#888" }}>
             Same colours in every view. Volumes are model-units³ unless the
-            model is GPS-scaled (then true m³). Counting uses shape + colour
-            heuristics — verify with the photo overlay before trusting counts.
+            model is GPS-scaled (then true m³). Counts come from clustering the
+            3D points of each class — verify with the photo overlay before
+            trusting them.
           </p>
         </div>
       )}
